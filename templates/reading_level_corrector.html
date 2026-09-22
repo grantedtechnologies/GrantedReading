@@ -71,7 +71,7 @@
   .app-nav-link:hover { color: var(--green-dark); background: var(--green-light); }
   .app-nav-link.active { color: var(--green); background: var(--green-light); }
   .topnav-right { display: flex; align-items: center; gap: 12px; }
-  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; }
+  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; color: inherit; text-decoration: none; display: block; }
   .user-role { font-size: 12px; color: var(--muted); text-align: right; }
   .avatar {
     width: 38px; height: 38px; border-radius: 50%;
@@ -168,6 +168,8 @@
     border-radius: 8px; padding: 8px 14px; cursor: pointer; color: var(--muted);
   }
   .mode-btn.selected { background: var(--green); border-color: var(--green); color: #fff; }
+  .mode-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .vocab-mode { display: flex; gap: 8px; margin: 0 0 10px; }
   .field { margin-bottom: 16px; }
   .field-label {
     display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px;
@@ -288,6 +290,14 @@
   </p>
 
   <section class="card tool-card">
+    <div class="field">
+      <label class="field-label" for="student-select">Student (optional)</label>
+      <select id="student-select">
+        <option value="">Choose a student…</option>
+      </select>
+      <p class="field-hint" id="student-hint">Sign in to load your students, or fill the form by hand.</p>
+    </div>
+
     <div class="mode-toggle">
       <button type="button" class="mode-btn selected" id="mode-passage" data-mode="passage">Single passage</button>
       <button type="button" class="mode-btn" id="mode-worksheet" data-mode="worksheet">Full worksheet</button>
@@ -319,7 +329,15 @@
       </div>
       <div class="field">
         <label class="field-label" for="passage-protected">Protected terms (optional)</label>
+        <div class="mode-toggle vocab-mode" id="passage-vocab-mode">
+          <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
+          <button type="button" class="mode-btn" data-vocab-mode="list" id="passage-vocab-list-tab" disabled>Word list</button>
+        </div>
         <input id="passage-protected" type="text" placeholder="photosynthesis, resilient" />
+        <select id="passage-vocab-list" class="hidden">
+          <option value="">Choose a word list…</option>
+        </select>
+        <p class="field-hint" id="passage-vocab-hint">These words stay as-is. Separate extra words with commas.</p>
       </div>
       <div class="field">
         <label class="field-label" for="passage-type">Passage type (optional)</label>
@@ -383,7 +401,15 @@
       </div>
       <div class="field">
         <label class="field-label" for="worksheet-protected">Protected terms (optional)</label>
+        <div class="mode-toggle vocab-mode" id="worksheet-vocab-mode">
+          <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
+          <button type="button" class="mode-btn" data-vocab-mode="list" id="worksheet-vocab-list-tab" disabled>Word list</button>
+        </div>
         <input id="worksheet-protected" type="text" />
+        <select id="worksheet-vocab-list" class="hidden">
+          <option value="">Choose a word list…</option>
+        </select>
+        <p class="field-hint" id="worksheet-vocab-hint">These words stay as-is. Separate extra words with commas.</p>
       </div>
       <div class="field">
         <label class="field-label" for="worksheet-type">Passage type</label>
@@ -459,7 +485,112 @@
   let worksheetKind = "practice";
   let detectedBlocks = [];
   let worksheetPdfUrl = null;
+  let students = [];
+  let selectedStudent = null;
+  let passageVocabMode = "type";
+  let worksheetVocabMode = "type";
   const confirmBtnDefault = "Looks good, continue";
+
+  function gradeValue(level) {
+    return String(level === 0 || level === "0" ? "K" : level);
+  }
+
+  function setVocabMode(prefix, mode) {
+    if (prefix === "passage") passageVocabMode = mode;
+    else worksheetVocabMode = mode;
+    const typing = mode === "type";
+    document.querySelectorAll(`#${prefix}-vocab-mode .mode-btn`).forEach((btn) => {
+      btn.classList.toggle("selected", btn.dataset.vocabMode === mode);
+    });
+    document.getElementById(`${prefix}-protected`).classList.toggle("hidden", !typing);
+    document.getElementById(`${prefix}-vocab-list`).classList.toggle("hidden", typing);
+    document.getElementById(`${prefix}-vocab-hint`).textContent = typing
+      ? "These words stay as-is. Separate extra words with commas."
+      : "Words from this list stay as-is in the leveled text.";
+  }
+
+  function fillVocabLists(lists) {
+    ["passage", "worksheet"].forEach((prefix) => {
+      const select = document.getElementById(`${prefix}-vocab-list`);
+      const tab = document.getElementById(`${prefix}-vocab-list-tab`);
+      select.innerHTML = '<option value="">Choose a word list…</option>';
+      (lists || []).forEach((list) => {
+        const option = document.createElement("option");
+        option.value = String(list.vocab_list_id);
+        option.textContent = list.words.length
+          ? `${list.list_name} (${list.words.join(", ")})`
+          : list.list_name;
+        select.appendChild(option);
+      });
+      tab.disabled = !lists || !lists.length;
+      if (!lists || !lists.length) setVocabMode(prefix, "type");
+    });
+  }
+
+  function applyStudent(student) {
+    selectedStudent = student;
+    if (!student) {
+      fillVocabLists([]);
+      return;
+    }
+    const level = gradeValue(student.reading_level);
+    document.getElementById("passage-grade").value = level;
+    document.getElementById("worksheet-grade").value = level;
+    fillVocabLists(student.vocab_lists);
+  }
+
+  function protectedTerms(prefix) {
+    const mode = prefix === "passage" ? passageVocabMode : worksheetVocabMode;
+    if (mode === "list" && selectedStudent) {
+      const listId = document.getElementById(`${prefix}-vocab-list`).value;
+      const vocabList = (selectedStudent.vocab_lists || []).find(
+        (item) => String(item.vocab_list_id) === listId
+      );
+      return vocabList ? vocabList.words.join(", ") : "";
+    }
+    return document.getElementById(`${prefix}-protected`).value;
+  }
+
+  document.getElementById("student-select").addEventListener("change", (event) => {
+    const student = students.find((item) => String(item.student_id) === event.target.value);
+    applyStudent(student || null);
+  });
+
+  ["passage", "worksheet"].forEach((prefix) => {
+    document.querySelectorAll(`#${prefix}-vocab-mode .mode-btn`).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        setVocabMode(prefix, btn.dataset.vocabMode);
+      });
+    });
+  });
+
+  async function loadStudents() {
+    const select = document.getElementById("student-select");
+    const hint = document.getElementById("student-hint");
+    try {
+      const response = await fetch("/api/students");
+      const data = await response.json();
+      if (!response.ok) {
+        hint.textContent = data.error || "Sign in to load your students, or fill the form by hand.";
+        return;
+      }
+      students = data.students || [];
+      students.forEach((student) => {
+        const option = document.createElement("option");
+        option.value = String(student.student_id);
+        option.textContent = `${student.first_name} ${student.last_name}`;
+        select.appendChild(option);
+      });
+      hint.textContent = students.length
+        ? "Pick a student to fill the target grade and word lists. You can still change anything."
+        : "No students yet. Fill the form by hand.";
+    } catch (err) {
+      hint.textContent = "Could not load students. Fill the form by hand.";
+    }
+  }
+
+  loadStudents();
 
   document.getElementById("mode-passage").addEventListener("click", () => setMode("passage"));
   document.getElementById("mode-worksheet").addEventListener("click", () => setMode("worksheet"));
@@ -504,7 +635,7 @@
         body: JSON.stringify({
           text,
           target_grade: targetGrade,
-          protected_terms: document.getElementById("passage-protected").value,
+          protected_terms: protectedTerms("passage"),
           allow_rewrite: document.getElementById("passage-rewrite").checked,
           passage_type: document.getElementById("passage-type").value || null
         })
@@ -766,7 +897,7 @@
           target_grade: targetGrade,
           worksheet_kind: worksheetKind,
           source_material: document.getElementById("source-material").value,
-          protected_terms: document.getElementById("worksheet-protected").value,
+          protected_terms: protectedTerms("worksheet"),
           dok_mix: mix,
           passage_type: document.getElementById("worksheet-type").value || null,
           convert_questions: document.getElementById("worksheet-convert").checked,

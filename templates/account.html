@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Granted Reading — Account</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #3aaa35;
+    --green-dark: #2d8a29;
+    --green-light: #eaf7e9;
+    --ink: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f3f4f6;
+    --white: #ffffff;
+    --header-h: 72px;
+    --radius: 10px;
+    --font: 'Nunito', sans-serif;
+    --font-body: 'Nunito Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+
+  .topnav {
+    height: var(--header-h);
+    background: var(--white);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+  }
+  .topnav-left { display: flex; align-items: center; gap: 16px; }
+  .hamburger {
+    background: none; border: none; cursor: pointer;
+    display: flex; flex-direction: column; gap: 5px; padding: 4px;
+  }
+  .hamburger span { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; }
+  .logo-link { display: flex; align-items: center; text-decoration: none; }
+  .logo-img { height: 64px; width: auto; display: block; }
+  .app-nav { display: flex; align-items: center; gap: 4px; }
+  .app-nav-link {
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .app-nav-link:hover { color: var(--green-dark); background: var(--green-light); }
+  .app-nav-link.active { color: var(--green); background: var(--green-light); }
+  .topnav-right { display: flex; align-items: center; gap: 12px; }
+  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; color: inherit; text-decoration: none; display: block; }
+  .user-role { font-size: 12px; color: var(--muted); text-align: right; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--green-light); border: 2px solid var(--green);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font); font-weight: 800; font-size: 14px; color: var(--green);
+  }
+
+  .page {
+    margin: var(--header-h) auto 0;
+    padding: 40px 32px 64px;
+    max-width: 880px;
+    width: 100%;
+  }
+
+  .page-title {
+    font-family: var(--font);
+    font-size: 28px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+
+  .lead {
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin-bottom: 28px;
+  }
+
+  .card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 26px 26px;
+    margin-bottom: 18px;
+  }
+
+  h2 {
+    font-family: var(--font);
+    font-size: 20px;
+    font-weight: 800;
+    margin-bottom: 6px;
+  }
+
+  .hint { font-size: 13px; color: var(--muted); margin-bottom: 16px; line-height: 1.5; }
+
+  .field { margin-bottom: 14px; }
+  label {
+    display: block;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  input, select, textarea {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--font-body);
+    font-size: 15px;
+    background: var(--white);
+  }
+  textarea { min-height: 74px; resize: vertical; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--green); }
+  input:disabled {
+    background: var(--bg);
+    color: var(--muted);
+  }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .plan-card {
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 10px;
+    cursor: pointer;
+    text-align: center;
+    background: var(--bg);
+  }
+  .plan-card.selected { border-color: var(--green); background: var(--green-light); }
+  .plan-card input { display: none; }
+  .plan-name { font-family: var(--font); font-weight: 800; font-size: 14px; }
+  .plan-price { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .submit {
+    border: none;
+    border-radius: 8px;
+    background: var(--green);
+    color: white;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    padding: 10px 16px;
+    cursor: pointer;
+  }
+  .submit:hover { background: var(--green-dark); }
+  .submit:disabled { opacity: 0.7; cursor: wait; }
+
+  .status { font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .status.error { color: #b42318; }
+  .status.ok { color: var(--green-dark); }
+
+  .student {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    background: var(--bg);
+    margin-bottom: 12px;
+  }
+  .student h3 {
+    font-family: var(--font);
+    font-size: 16px;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+
+  .list-block {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .list-name { font-family: var(--font); font-weight: 800; font-size: 14px; }
+  .words { font-size: 13px; color: var(--muted); margin: 4px 0 10px; }
+
+  .inline { display: flex; gap: 8px; }
+  .inline input { flex: 1; }
+  .empty { font-size: 14px; color: var(--muted); }
+
+  @media (max-width: 700px) {
+    .row { grid-template-columns: 1fr; }
+    .page { padding: 28px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+{% include '_nav.html' %}
+
+<main class="page">
+  <h1 class="page-title">Account</h1>
+  <p class="lead">Update your name and plan, then add students and the word lists you want to use on worksheets.</p>
+
+  <section class="card">
+    <h2>Your profile</h2>
+    <p class="hint">Email and password stay the same here.</p>
+    <form id="profile-form">
+      <div class="row">
+        <div class="field">
+          <label for="first-name">First name</label>
+          <input id="first-name" name="first_name" autocomplete="given-name" />
+        </div>
+        <div class="field">
+          <label for="last-name">Last name</label>
+          <input id="last-name" name="last_name" autocomplete="family-name" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" disabled />
+      </div>
+      <div class="field">
+        <label>Plan</label>
+        <div class="plan-grid">
+          <label class="plan-card" id="plan-standard">
+            <input type="radio" name="membership" value="standard" />
+            <div class="plan-name">Standard</div>
+            <div class="plan-price">Free · 1 worksheet a day</div>
+          </label>
+          <label class="plan-card" id="plan-pro">
+            <input type="radio" name="membership" value="pro" />
+            <div class="plan-name">Pro</div>
+            <div class="plan-price">$5.99 · unlimited worksheets</div>
+          </label>
+        </div>
+      </div>
+      <button class="submit" type="submit">Save profile</button>
+      <div class="status" id="profile-status"></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Students and word lists</h2>
+    <p class="hint">Add a student, then give them a word list with at least one word.</p>
+    <form id="student-form">
+      <div class="row">
+        <div class="field">
+          <label for="student-first">First name</label>
+          <input id="student-first" />
+        </div>
+        <div class="field">
+          <label for="student-last">Last name</label>
+          <input id="student-last" />
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="student-grade">Classroom grade</label>
+          <select id="student-grade"></select>
+        </div>
+        <div class="field">
+          <label for="student-level">Reading level</label>
+          <select id="student-level"></select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="student-notes">Notes (optional)</label>
+        <textarea id="student-notes" placeholder="What helps this student on a worksheet"></textarea>
+      </div>
+      <button class="submit" type="submit">Add student</button>
+      <div class="status" id="student-status"></div>
+    </form>
+    <div id="student-list" style="margin-top:18px"></div>
+  </section>
+</main>
+
+<script>
+  const grades = [
+    { value: 0, label: "K" },
+    { value: 1, label: "1st" },
+    { value: 2, label: "2nd" },
+    { value: 3, label: "3rd" },
+    { value: 4, label: "4th" },
+    { value: 5, label: "5th" },
+    { value: 6, label: "6th" },
+    { value: 7, label: "7th" },
+    { value: 8, label: "8th" },
+    { value: 9, label: "9th" },
+    { value: 10, label: "10th" },
+    { value: 11, label: "11th" },
+    { value: 12, label: "12th" },
+  ];
+
+  let students = [];
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function fillGradeSelect(select, selected) {
+    select.innerHTML = grades.map((grade) => {
+      const on = Number(selected) === grade.value ? " selected" : "";
+      return `<option value="${grade.value}"${on}>${grade.label}</option>`;
+    }).join("");
+  }
+
+  function gradeLabel(value) {
+    const match = grades.find((grade) => grade.value === Number(value));
+    return match ? match.label : value;
+  }
+
+  function setStatus(id, message, ok) {
+    const el = document.getElementById(id);
+    el.textContent = message || "";
+    el.className = "status " + (ok ? "ok" : "error");
+  }
+
+  function setPlan(membership) {
+    const isPro = membership === "pro";
+    document.querySelector('input[name="membership"][value="standard"]').checked = !isPro;
+    document.querySelector('input[name="membership"][value="pro"]').checked = isPro;
+    document.getElementById("plan-standard").classList.toggle("selected", !isPro);
+    document.getElementById("plan-pro").classList.toggle("selected", isPro);
+  }
+
+  function renderStudents() {
+    const box = document.getElementById("student-list");
+    if (!students.length) {
+      box.innerHTML = '<p class="empty">No students yet.</p>';
+      return;
+    }
+    box.innerHTML = students.map((student) => {
+      const lists = (student.vocab_lists || []).map((list) => `
+        <div class="list-block">
+          <div class="list-name">${escapeHtml(list.list_name)}</div>
+          <div class="words">${list.description ? escapeHtml(list.description) + " · " : ""}${
+            list.words.length ? escapeHtml(list.words.join(", ")) : "No words yet"
+          }</div>
+          <form class="inline add-words-form" data-list-id="${list.vocab_list_id}">
+            <input name="words" placeholder="Add words, comma separated" />
+            <button class="submit" type="submit">Add words</button>
+          </form>
+        </div>
+      `).join("");
+      return `
+        <article class="student">
+          <h3>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</h3>
+          <p class="meta">Classroom ${escapeHtml(gradeLabel(student.classroom_grade))} · reading ${escapeHtml(gradeLabel(student.reading_level))}</p>
+          ${lists || ""}
+          <form class="add-list-form" data-student-id="${student.student_id}">
+            <div class="row">
+              <div class="field">
+                <label>List name</label>
+                <input name="list_name" placeholder="Soccer words" />
+              </div>
+              <div class="field">
+                <label>Description (optional)</label>
+                <input name="description" placeholder="Keep these in stories" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Words</label>
+              <textarea name="words" placeholder="goal, pass, teammate"></textarea>
+            </div>
+            <button class="submit" type="submit">Add word list</button>
+            <div class="status"></div>
+          </form>
+        </article>
+      `;
+    }).join("");
+
+    box.querySelectorAll(".add-list-form").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const status = form.querySelector(".status");
+        status.textContent = "";
+        const response = await send("/api/vocab-lists", {
+          student_id: form.dataset.studentId,
+          list_name: form.list_name.value,
+          description: form.description.value,
+          words: form.words.value,
+        });
+        if (!response.ok) {
+          status.className = "status error";
+          status.textContent = response.error;
+          return;
+        }
+        await loadAccount();
+      });
+    });
+
+    box.querySelectorAll(".add-words-form").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await send(`/api/vocab-lists/${form.dataset.listId}/words`, {
+          words: form.words.value,
+        });
+        if (!response.ok) {
+          setStatus("student-status", response.error, false);
+          return;
+        }
+        await loadAccount();
+      });
+    });
+  }
+
+  async function send(url, body) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { ok: false, error: data.error || "Could not save that." };
+      }
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: "Could not reach the server." };
+    }
+  }
+
+  async function loadAccount() {
+    const response = await fetch("/api/account");
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    const teacher = data.teacher || {};
+    document.getElementById("first-name").value = teacher.first_name || "";
+    document.getElementById("last-name").value = teacher.last_name || "";
+    document.getElementById("email").value = teacher.email || "";
+    setPlan(teacher.membership || "standard");
+    const nameEl = document.querySelector(".user-name");
+    if (nameEl && teacher.first_name) {
+      nameEl.textContent = `${teacher.first_name} ${teacher.last_name}`;
+    }
+    const roleEl = document.querySelector(".user-role");
+    if (roleEl) {
+      roleEl.textContent = teacher.membership === "pro" ? "Pro · $5.99" : "Standard · Free";
+    }
+    students = data.students || [];
+    renderStudents();
+  }
+
+  fillGradeSelect(document.getElementById("student-grade"), 4);
+  fillGradeSelect(document.getElementById("student-level"), 3);
+
+  document.querySelectorAll('input[name="membership"]').forEach((input) => {
+    input.addEventListener("change", () => setPlan(input.value));
+  });
+
+  document.getElementById("profile-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const btn = event.target.querySelector(".submit");
+    btn.disabled = true;
+    const response = await send("/api/account", {
+      first_name: document.getElementById("first-name").value,
+      last_name: document.getElementById("last-name").value,
+      membership: document.querySelector('input[name="membership"]:checked').value,
+    });
+    btn.disabled = false;
+    setStatus("profile-status", response.ok ? "Saved." : response.error, response.ok);
+    if (response.ok) await loadAccount();
+  });
+
+  document.getElementById("student-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const btn = event.target.querySelector(".submit");
+    btn.disabled = true;
+    const response = await send("/api/students", {
+      first_name: document.getElementById("student-first").value,
+      last_name: document.getElementById("student-last").value,
+      classroom_grade: document.getElementById("student-grade").value,
+      reading_level: document.getElementById("student-level").value,
+      notes: document.getElementById("student-notes").value,
+    });
+    btn.disabled = false;
+    setStatus("student-status", response.ok ? "Student added. Add a word list below." : response.error, response.ok);
+    if (response.ok) {
+      document.getElementById("student-first").value = "";
+      document.getElementById("student-last").value = "";
+      document.getElementById("student-notes").value = "";
+      await loadAccount();
+    }
+  });
+
+  loadAccount();
+</script>
+</body>
+</html>

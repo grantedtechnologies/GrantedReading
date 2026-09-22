@@ -77,7 +77,7 @@
   .app-nav-link.active { color: var(--green); background: var(--green-light); }
 
   .topnav-right { display: flex; align-items: center; gap: 12px; }
-  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; }
+  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; color: inherit; text-decoration: none; display: block; }
   .user-role { font-size: 12px; color: var(--muted); text-align: right; }
   .avatar {
     width: 38px; height: 38px; border-radius: 50%;
@@ -186,6 +186,30 @@
     color: var(--muted);
     line-height: 1.4;
   }
+
+  .hidden { display: none !important; }
+
+  .vocab-mode {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .mode-btn {
+    flex: 1;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 800;
+    border: 1.5px solid var(--border);
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    color: var(--muted);
+  }
+
+  .mode-btn.selected { background: var(--green); border-color: var(--green); color: #fff; }
+  .mode-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .combo { position: relative; }
   .combo-input-wrap { position: relative; }
@@ -422,6 +446,14 @@
       <div class="form-card">
 
         <div class="field">
+          <label class="field-label" for="student-select">Student</label>
+          <select id="student-select">
+            <option value="">Choose a student…</option>
+          </select>
+          <p class="field-hint" id="student-hint">Sign in to load your students, or fill the form by hand.</p>
+        </div>
+
+        <div class="field">
           <label class="field-label">Student's grade</label>
           <div class="grade-grid" id="grade-grid">
             <button class="grade-btn" data-grade="K">K</button>
@@ -477,8 +509,15 @@
 
         <div class="field">
           <label class="field-label">Focus vocabulary (optional)</label>
+          <div class="mode-toggle vocab-mode" id="vocab-mode">
+            <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
+            <button type="button" class="mode-btn" data-vocab-mode="list" id="vocab-list-tab" disabled>Word list</button>
+          </div>
           <input id="focus-vocabulary" type="text" placeholder="e.g. resilient" autocomplete="off" />
-          <p class="field-hint">This word will appear 3–5 times in the story. It will not be simplified, even if it is hard. Separate extra words with commas.</p>
+          <select id="vocab-list-select" class="hidden">
+            <option value="">Choose a word list…</option>
+          </select>
+          <p class="field-hint" id="vocab-hint">This word will appear 3–5 times in the story. It will not be simplified, even if it is hard. Separate extra words with commas.</p>
         </div>
 
         <div class="field">
@@ -605,6 +644,9 @@
 
 <script>
   let selectedGrade = "";
+  let students = [];
+  let selectedStudent = null;
+  let vocabMode = "type";
   let currentBlobUrl = null;
   let currentImageBase64 = null;
   let reviewContent = null;
@@ -851,13 +893,108 @@
     document.getElementById("sidebar").classList.toggle("open");
   });
 
+  function gradeValue(level) {
+    return String(level === 0 || level === "0" ? "K" : level);
+  }
+
+  function setGrade(grade) {
+    const value = gradeValue(grade);
+    selectedGrade = "";
+    document.querySelectorAll(".grade-btn").forEach((btn) => {
+      const on = btn.dataset.grade === value;
+      btn.classList.toggle("selected", on);
+      if (on) selectedGrade = value;
+    });
+  }
+
+  function setReadingLevel(level) {
+    document.getElementById("reading-level").value = gradeValue(level);
+  }
+
+  function setVocabMode(mode) {
+    vocabMode = mode;
+    const typing = mode === "type";
+    document.querySelectorAll("#vocab-mode .mode-btn").forEach((btn) => {
+      btn.classList.toggle("selected", btn.dataset.vocabMode === mode);
+    });
+    document.getElementById("focus-vocabulary").classList.toggle("hidden", !typing);
+    document.getElementById("vocab-list-select").classList.toggle("hidden", typing);
+    document.getElementById("vocab-hint").textContent = typing
+      ? "This word will appear 3–5 times in the story. It will not be simplified, even if it is hard. Separate extra words with commas."
+      : "The story will use the words from this list. They will not be simplified.";
+  }
+
+  function fillVocabLists(lists) {
+    const select = document.getElementById("vocab-list-select");
+    const tab = document.getElementById("vocab-list-tab");
+    select.innerHTML = '<option value="">Choose a word list…</option>';
+    (lists || []).forEach((list) => {
+      const option = document.createElement("option");
+      option.value = String(list.vocab_list_id);
+      option.textContent = list.words.length
+        ? `${list.list_name} (${list.words.join(", ")})`
+        : list.list_name;
+      select.appendChild(option);
+    });
+    tab.disabled = !lists || !lists.length;
+    if (!lists || !lists.length) setVocabMode("type");
+  }
+
+  function applyStudent(student) {
+    selectedStudent = student;
+    if (!student) {
+      fillVocabLists([]);
+      return;
+    }
+    setGrade(student.classroom_grade);
+    setReadingLevel(student.reading_level);
+    fillVocabLists(student.vocab_lists);
+  }
+
   document.querySelectorAll(".grade-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".grade-btn").forEach(b => b.classList.remove("selected"));
-      btn.classList.add("selected");
-      selectedGrade = btn.dataset.grade;
+      setGrade(btn.dataset.grade);
     });
   });
+
+  document.querySelectorAll("#vocab-mode .mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      setVocabMode(btn.dataset.vocabMode);
+    });
+  });
+
+  document.getElementById("student-select").addEventListener("change", (event) => {
+    const student = students.find((item) => String(item.student_id) === event.target.value);
+    applyStudent(student || null);
+  });
+
+  async function loadStudents() {
+    const select = document.getElementById("student-select");
+    const hint = document.getElementById("student-hint");
+    try {
+      const response = await fetch("/api/students");
+      const data = await response.json();
+      if (!response.ok) {
+        hint.textContent = data.error || "Sign in to load your students, or fill the form by hand.";
+        return;
+      }
+      students = data.students || [];
+      students.forEach((student) => {
+        const option = document.createElement("option");
+        option.value = String(student.student_id);
+        option.textContent = `${student.first_name} ${student.last_name}`;
+        select.appendChild(option);
+      });
+      hint.textContent = students.length
+        ? "Pick a student to fill grade, reading level, and word lists."
+        : "No students yet. Fill the form by hand.";
+    } catch (err) {
+      hint.textContent = "Could not load students. Fill the form by hand.";
+    }
+  }
+
+  loadStudents();
 
   function setStep(n) {
     for (let i = 1; i <= 4; i++) {
@@ -878,7 +1015,14 @@
   async function generateWorksheet() {
     const readingLevel = document.getElementById("reading-level").value;
     const interests    = document.getElementById("interests").value.trim();
-    const focusVocabulary = document.getElementById("focus-vocabulary").value.trim();
+    let focusVocabulary = document.getElementById("focus-vocabulary").value.trim();
+    if (vocabMode === "list" && selectedStudent) {
+      const listId = document.getElementById("vocab-list-select").value;
+      const vocabList = (selectedStudent.vocab_lists || []).find(
+        (item) => String(item.vocab_list_id) === listId
+      );
+      focusVocabulary = vocabList ? vocabList.words.join(", ") : "";
+    }
     const focusPhonics = document.getElementById("focus-phonics").value.trim();
     const dokLevel = document.getElementById("dok-level").value;
     const errorBox     = document.getElementById("error-box");

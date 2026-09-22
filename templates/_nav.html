@@ -3,20 +3,30 @@
     <button class="hamburger" aria-label="Menu" type="button">
       <span></span><span></span><span></span>
     </button>
-    <a href="/" class="logo-link">
+    <a href="/worksheet" class="logo-link">
       <img src="/static/logo.png" alt="Granted Reading" class="logo-img" />
     </a>
     <div class="app-nav">
-      <a href="/" class="app-nav-link{% if active_page == 'worksheet' %} active{% endif %}">Worksheet Generator</a>
+      <a href="/worksheet" class="app-nav-link{% if active_page == 'worksheet' %} active{% endif %}">Worksheet Generator</a>
       <a href="/reading-level-corrector" class="app-nav-link{% if active_page == 'reading_level' %} active{% endif %}">Reading Level Corrector</a>
       <a href="/how-reading-level-works" class="app-nav-link{% if active_page == 'how_reading_level' %} active{% endif %}">How it works</a>
+      {% if session.teacher_id %}
+      <a href="/account" class="app-nav-link{% if active_page == 'account' %} active{% endif %}">Account</a>
+      {% endif %}
     </div>
   </div>
   <div class="topnav-right">
+    {% if session.teacher_name %}
     <div>
-      <div class="user-name">Eden Wilson</div>
-      <div class="user-role">Special Education Teacher</div>
+      <a href="/account" class="user-name">{{ session.teacher_name }}</a>
+      <div class="user-role">
+        {% if session.membership == 'pro' %}Pro · $5.99{% else %}Standard · Free{% endif %}
+      </div>
+      <a href="/logout" class="app-nav-link" style="padding:0;font-size:12px">Sign out</a>
     </div>
-    <div class="avatar">EW</div>
+    <div class="avatar">{{ session.teacher_name.split()[0][0] }}{{ session.teacher_name.split()[-1][0] }}</div>
+    {% else %}
+    <a href="/login" class="app-nav-link">Sign in</a>
+    {% endif %}
   </div>
 </nav>

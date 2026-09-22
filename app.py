@@ -5,15 +5,18 @@ import re
 import time
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, send_file
+from flask import Flask, jsonify, redirect, render_template, request, send_file, session
 
 import ai
+import cache
+import db
 import file
 from reading_level import ReadingLevelError
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "granted-dev-secret")
 
 OUTPUT_DIR = "worksheets"
 
@@ -27,9 +30,234 @@ def save_worksheet_pdf(pdf_bytes, title):
     return path
 
 
+def _teacher_session(teacher):
+    session["teacher_id"] = teacher["teacher_id"]
+    session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
+    session["membership"] = teacher.get("membership") or "standard"
+
+
+def _require_teacher_id():
+    teacher_id = session.get("teacher_id")
+    if not teacher_id:
+        return None, (jsonify({"error": "Sign in to continue."}), 401)
+    return teacher_id, None
+
+
+def _parse_grade(value, label):
+    raw = "" if value is None else str(value).strip()
+    if raw.upper() in ("K", "KINDERGARTEN"):
+        raw = "0"
+    if raw == "":
+        raise ValueError(f"Choose a {label}.")
+    try:
+        grade = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Choose a {label}.") from exc
+    if grade < 0 or grade > 12:
+        raise ValueError(f"{label} must be kindergarten through 12.")
+    return grade
+
+
+def _parse_words(raw):
+    if isinstance(raw, list):
+        parts = raw
+    else:
+        parts = re.split(r"[\n,]", raw or "")
+    words = []
+    seen = set()
+    for part in parts:
+        word = " ".join(str(part).split())
+        key = word.lower()
+        if word and key not in seen:
+            seen.add(key)
+            words.append(word)
+    return words
+
+
 @app.route("/")
 def index():
+    if session.get("teacher_id"):
+        return redirect("/worksheet")
+    return render_template("login.html", initial_mode="signup")
+
+
+@app.route("/worksheet")
+def worksheet():
     return render_template("index.html", active_page="worksheet")
+
+
+@app.route("/api/students")
+def api_students():
+    teacher_id = session.get("teacher_id")
+    if not teacher_id:
+        return jsonify({"error": "Sign in to load students.", "students": []}), 401
+    return jsonify({"students": db.list_students_for_teacher(teacher_id)})
+
+
+@app.route("/login")
+def login_page():
+    if session.get("teacher_id"):
+        return redirect("/worksheet")
+    return render_template("login.html", initial_mode="signin")
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    body = request.get_json() or {}
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    if not email or not password:
+        return jsonify({"error": "Enter an email and password."}), 400
+
+    teacher = db.find_teacher_by_email(email)
+    if teacher is None or teacher["password"] != password:
+        return jsonify({"error": "That email or password is not right."}), 401
+
+    _teacher_session(teacher)
+    return jsonify({"ok": True, "redirect": "/worksheet"})
+
+
+@app.route("/signup", methods=["POST"])
+def signup():
+    body = request.get_json() or {}
+    first_name = (body.get("first_name") or "").strip()
+    last_name = (body.get("last_name") or "").strip()
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+
+    if not first_name or not last_name:
+        return jsonify({"error": "Enter a first and last name."}), 400
+    if not email or not password:
+        return jsonify({"error": "Enter an email and password."}), 400
+
+    membership = (body.get("membership") or "standard").strip().lower()
+    if membership not in ("standard", "pro"):
+        return jsonify({"error": "Choose Standard or Pro."}), 400
+
+    try:
+        teacher = db.create_teacher(
+            first_name, last_name, email, password, membership=membership
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+
+    _teacher_session(teacher)
+    return jsonify({"ok": True, "redirect": "/worksheet"})
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+
+@app.route("/account")
+def account():
+    if not session.get("teacher_id"):
+        return redirect("/login")
+    return render_template("account.html", active_page="account")
+
+
+@app.route("/api/account")
+def api_account():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    teacher = db.find_teacher_by_id(teacher_id)
+    if teacher is None:
+        session.clear()
+        return jsonify({"error": "Sign in to continue."}), 401
+    return jsonify({
+        "teacher": teacher,
+        "students": db.list_students_for_teacher(teacher_id),
+    })
+
+
+@app.route("/api/account", methods=["POST"])
+def api_update_account():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    first_name = (body.get("first_name") or "").strip()
+    last_name = (body.get("last_name") or "").strip()
+    if not first_name or not last_name:
+        return jsonify({"error": "Enter a first and last name."}), 400
+    membership = (body.get("membership") or "standard").strip().lower()
+    if membership not in ("standard", "pro"):
+        return jsonify({"error": "Choose Standard or Pro."}), 400
+    teacher = db.update_teacher(teacher_id, first_name, last_name, membership)
+    _teacher_session(teacher)
+    return jsonify({"ok": True, "teacher": teacher})
+
+
+@app.route("/api/students", methods=["POST"])
+def api_create_student():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    first_name = (body.get("first_name") or "").strip()
+    last_name = (body.get("last_name") or "").strip()
+    notes = (body.get("notes") or "").strip()
+    try:
+        classroom_grade = _parse_grade(body.get("classroom_grade"), "classroom grade")
+        reading_level = _parse_grade(body.get("reading_level"), "reading level")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not first_name or not last_name:
+        return jsonify({"error": "Enter the student's first and last name."}), 400
+    student = db.create_student(
+        teacher_id,
+        first_name,
+        last_name,
+        classroom_grade,
+        reading_level,
+        notes=notes,
+    )
+    return jsonify({"ok": True, "student": student})
+
+
+@app.route("/api/vocab-lists", methods=["POST"])
+def api_create_vocab_list():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    list_name = (body.get("list_name") or "").strip()
+    description = (body.get("description") or "").strip()
+    words = _parse_words(body.get("words"))
+    try:
+        student_id = int(body.get("student_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Choose a student for this word list."}), 400
+    if not list_name:
+        return jsonify({"error": "Enter a list name."}), 400
+    if not words:
+        return jsonify({"error": "Add at least one word to the list."}), 400
+    try:
+        vocab_list = db.create_vocab_list(
+            teacher_id, student_id, list_name, description, words
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "vocab_list": vocab_list})
+
+
+@app.route("/api/vocab-lists/<int:vocab_list_id>/words", methods=["POST"])
+def api_add_vocab_words(vocab_list_id):
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    words = _parse_words(body.get("words"))
+    if not words:
+        return jsonify({"error": "Add at least one word."}), 400
+    try:
+        added = db.add_words_to_list(teacher_id, vocab_list_id, words)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "words": added})
 
 
 @app.route("/reading-level-corrector")
@@ -238,6 +466,21 @@ def generate_leveled_passage():
 
 @app.route("/generate", methods=["POST"])
 def generate():
+    teacher_id = session.get("teacher_id")
+    if not teacher_id:
+        return jsonify({"error": "Sign in to generate a worksheet."}), 401
+
+    membership = session.get("membership") or "standard"
+    if membership != "pro":
+        try:
+            if cache.worksheet_quota_used(teacher_id):
+                return jsonify({
+                    "error": "Standard includes one worksheet a day. Upgrade to Pro for more.",
+                }), 429
+        except Exception:
+            app.logger.exception("Redis quota check failed")
+            return jsonify({"error": "Could not check your daily worksheet limit."}), 503
+
     body = request.get_json() or {}
 
     grade = body.get("grade", "")
@@ -257,6 +500,8 @@ def generate():
             dok_level=dok_level,
         )
         save_worksheet_pdf(pdf_bytes, model_data["title"])
+        if membership != "pro":
+            cache.mark_worksheet_used(teacher_id)
 
         return jsonify({
             "content": model_data,

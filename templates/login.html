@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Granted Reading — Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #3aaa35;
+    --green-dark: #2d8a29;
+    --green-light: #eaf7e9;
+    --ink: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f3f4f6;
+    --white: #ffffff;
+    --font: 'Nunito', sans-serif;
+    --font-body: 'Nunito Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 460px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 28px 32px;
+  }
+
+  .logo {
+    display: block;
+    height: 56px;
+    width: auto;
+    margin: 0 auto 18px;
+  }
+
+  h1 {
+    font-family: var(--font);
+    font-size: 22px;
+    text-align: center;
+    margin-bottom: 18px;
+  }
+
+  .mode-nav {
+    display: flex;
+    gap: 6px;
+    background: var(--bg);
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 20px;
+  }
+
+  .mode-nav button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--muted);
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .mode-nav button.active {
+    background: var(--white);
+    color: var(--green);
+  }
+
+  .field { margin-bottom: 14px; }
+
+  label {
+    display: block;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--font-body);
+    font-size: 15px;
+  }
+
+  input:focus {
+    outline: none;
+    border-color: var(--green);
+  }
+
+  .hidden { display: none; }
+
+  .error {
+    color: #b42318;
+    font-size: 13px;
+    min-height: 18px;
+    margin-bottom: 10px;
+  }
+
+  .submit {
+    width: 100%;
+    border: none;
+    border-radius: 8px;
+    background: var(--green);
+    color: white;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 15px;
+    padding: 12px;
+    cursor: pointer;
+  }
+
+  .submit:hover { background: var(--green-dark); }
+  .submit:disabled { opacity: 0.7; cursor: wait; }
+
+  .plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .plan-card {
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 10px;
+    cursor: pointer;
+    text-align: center;
+    background: var(--bg);
+  }
+  .plan-card.selected { border-color: var(--green); background: var(--green-light); }
+  .plan-card input { display: none; }
+  .plan-name { font-family: var(--font); font-weight: 800; font-size: 14px; }
+  .plan-price { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .plan-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="/static/logo.png" alt="Granted Reading" />
+    <h1 id="heading">Create an account</h1>
+
+    <div class="mode-nav" id="mode-nav">
+      <button type="button" id="tab-signin">Sign in</button>
+      <button type="button" id="tab-signup" class="active">Sign up</button>
+    </div>
+
+    <form id="auth-form">
+      <div id="name-fields">
+        <div class="field">
+          <label for="first-name">First name</label>
+          <input id="first-name" name="first_name" autocomplete="given-name" />
+        </div>
+        <div class="field">
+          <label for="last-name">Last name</label>
+          <input id="last-name" name="last_name" autocomplete="family-name" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div id="plan-fields" class="field">
+        <label>Plan</label>
+        <div class="plan-grid">
+          <label class="plan-card selected" id="plan-standard">
+            <input type="radio" name="membership" value="standard" checked />
+            <div class="plan-name">Standard</div>
+            <div class="plan-price">Free</div>
+            <div class="plan-note">1 worksheet a day</div>
+          </label>
+          <label class="plan-card" id="plan-pro">
+            <input type="radio" name="membership" value="pro" />
+            <div class="plan-name">Pro</div>
+            <div class="plan-price">$5.99</div>
+            <div class="plan-note">Unlimited worksheets</div>
+          </label>
+        </div>
+      </div>
+      <div class="error" id="error"></div>
+      <button class="submit" id="submit" type="submit">Sign up</button>
+    </form>
+  </div>
+
+<script>
+  let mode = {{ (initial_mode or "signup")|tojson }};
+
+  function setMode(next) {
+    mode = next;
+    const signingUp = mode === "signup";
+    document.getElementById("tab-signin").classList.toggle("active", !signingUp);
+    document.getElementById("tab-signup").classList.toggle("active", signingUp);
+    document.getElementById("name-fields").classList.toggle("hidden", !signingUp);
+    document.getElementById("plan-fields").classList.toggle("hidden", !signingUp);
+    document.getElementById("heading").textContent = signingUp ? "Create an account" : "Sign in";
+    document.getElementById("submit").textContent = signingUp ? "Sign up" : "Sign in";
+    document.getElementById("error").textContent = "";
+  }
+
+  document.querySelectorAll('input[name="membership"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      document.getElementById("plan-standard").classList.toggle(
+        "selected",
+        document.querySelector('input[name="membership"][value="standard"]').checked
+      );
+      document.getElementById("plan-pro").classList.toggle(
+        "selected",
+        document.querySelector('input[name="membership"][value="pro"]').checked
+      );
+    });
+  });
+
+  document.getElementById("tab-signin").addEventListener("click", () => setMode("signin"));
+  document.getElementById("tab-signup").addEventListener("click", () => setMode("signup"));
+  setMode(mode);
+
+  document.getElementById("auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("error");
+    const submit = document.getElementById("submit");
+    error.textContent = "";
+
+    const payload = {
+      email: document.getElementById("email").value.trim(),
+      password: document.getElementById("password").value,
+    };
+    if (mode === "signup") {
+      payload.first_name = document.getElementById("first-name").value.trim();
+      payload.last_name = document.getElementById("last-name").value.trim();
+      payload.membership = document.querySelector('input[name="membership"]:checked').value;
+    }
+
+    submit.disabled = true;
+    try {
+      const response = await fetch(mode === "signup" ? "/signup" : "/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        error.textContent = data.error || "Could not complete that.";
+        return;
+      }
+      window.location.href = data.redirect || "/worksheet";
+    } catch (err) {
+      error.textContent = "Could not reach the server.";
+    } finally {
+      submit.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

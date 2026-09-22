@@ -18,11 +18,11 @@ from reading_level import config as rl_config
 from reading_level.blocks import BLOCK_TYPES, WorksheetBlock, segment_worksheet_bytes
 from reading_level import dok as rl_dok
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
-LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "")
+LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "").rstrip("/")
 LLM_AGENT_NAME = os.getenv("LLM_AGENT_NAME", "")
 FLUX_API_KEY = os.getenv("FLUX_API_KEY", "")
 FLUX_API_URL = os.getenv("FLUX_API_URL", "")
@@ -56,11 +56,23 @@ Respond with ONLY valid JSON (no markdown, no extra text) in this exact shape:
 }"""
 
 
+def _llm_endpoint():
+    """Project URL from .env. Must end with /api/projects/<project-name>."""
+    endpoint = (os.getenv("LLM_ENDPOINT") or LLM_ENDPOINT).rstrip("/")
+    last = endpoint.rsplit("/", 1)[-1]
+    if not endpoint or last in ("projects", "api"):
+        raise RuntimeError(
+            "LLM_ENDPOINT must include the Foundry project name, for example "
+            "https://<resource>.services.ai.azure.com/api/projects/<project-name>."
+        )
+    return endpoint
+
+
 def ensure_ai_configured():
     missing = []
     if not FLUX_API_KEY:
         missing.append("FLUX_API_KEY")
-    if not LLM_ENDPOINT:
+    if not os.getenv("LLM_ENDPOINT", LLM_ENDPOINT):
         missing.append("LLM_ENDPOINT")
     if not LLM_AGENT_NAME:
         missing.append("LLM_AGENT_NAME")
@@ -70,6 +82,7 @@ def ensure_ai_configured():
         missing.append("FLUX_MODEL")
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    _llm_endpoint()
 
 
 _PHONICS_CHUNK = re.compile(r"[A-Za-z]{2,12}")
@@ -446,8 +459,10 @@ def _get_openai_client():
         credential = DefaultAzureCredential(
             exclude_managed_identity_credential=not _running_on_azure(),
         )
+        endpoint = _llm_endpoint()
+        logger.info("Azure project endpoint: %s", endpoint)
         _project_client = AIProjectClient(
-            endpoint=LLM_ENDPOINT,
+            endpoint=endpoint,
             credential=credential,
             allow_preview=True,
         )
