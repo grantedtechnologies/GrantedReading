@@ -2,9 +2,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including Azure CLI
 RUN apt-get update && apt-get install -y \
     curl \
+    gnupg \
+    lsb-release \
+    ca-certificates \
+    apt-transport-https \
+    && echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/azure-cli.list \
+    && curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null \
+    && apt-get update \
+    && apt-get install -y azure-cli \
+    && which az \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies

@@ -8,7 +8,7 @@ import threading
 import file
 import requests
 from azure.ai.projects import AIProjectClient
-from azure.identity import ClientSecretCredential
+from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
 import ai_rewrite
@@ -68,13 +68,6 @@ def ensure_ai_configured():
         missing.append("FLUX_API_URL")
     if not FLUX_MODEL:
         missing.append("FLUX_MODEL")
-    # Azure credentials required for Railway deployment
-    if not os.getenv("AZURE_CLIENT_ID"):
-        missing.append("AZURE_CLIENT_ID")
-    if not os.getenv("AZURE_TENANT_ID"):
-        missing.append("AZURE_TENANT_ID")
-    if not os.getenv("AZURE_CLIENT_SECRET"):
-        missing.append("AZURE_CLIENT_SECRET")
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
@@ -424,14 +417,23 @@ def normalize_model_output(data):
     }
 
 
+def _running_on_azure() -> bool:
+    """Managed identity only exists in Azure. Asking IMDS on a laptop just waits."""
+    return bool(
+        os.getenv("IDENTITY_ENDPOINT")
+        or os.getenv("MSI_ENDPOINT")
+        or os.getenv("IDENTITY_HEADER")
+    )
+
+
 _client_lock = threading.Lock()
 _project_client = None
 _openai_client = None
 
 
 def _get_openai_client():
-    """Reuse one project client. Use ClientSecretCredential with explicit
-    environment variables for Railway and other non-Azure deployments.
+    """Reuse one project client. Building DefaultAzureCredential per call
+    used to spend ~8s on a dead IMDS probe before falling through to `az login`.
     """
     global _project_client, _openai_client
     if _openai_client is not None:
@@ -441,11 +443,8 @@ def _get_openai_client():
         if _openai_client is not None:
             return _project_client, _openai_client
 
-        # Use explicit ClientSecretCredential for Railway deployment
-        credential = ClientSecretCredential(
-            tenant_id=os.getenv("AZURE_TENANT_ID"),
-            client_id=os.getenv("AZURE_CLIENT_ID"),
-            client_secret=os.getenv("AZURE_CLIENT_SECRET"),
+        credential = DefaultAzureCredential(
+            exclude_managed_identity_credential=not _running_on_azure(),
         )
         _project_client = AIProjectClient(
             endpoint=LLM_ENDPOINT,
