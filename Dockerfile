@@ -8,7 +8,9 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     lsb-release \
     ca-certificates \
+    apt-transport-https \
     && curl -sL https://aka.ms/InstallAzureCliDeb | bash \
+    && which az || (echo "Azure CLI installation failed" && exit 1) \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
