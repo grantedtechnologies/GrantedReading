@@ -42,7 +42,7 @@ which az && az --version || echo "WARNING: az command not found"
 echo "Starting Flask app..."
 exec python app.py
 EOF
-chmod +x /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Run Flask app via startup script for diagnostics
 CMD ["/app/start.sh"]
