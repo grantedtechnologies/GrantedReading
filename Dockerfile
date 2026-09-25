@@ -32,5 +32,15 @@ RUN python -c "from reading_level._nlp import get_sentence_encoder; get_sentence
 # Expose Flask port (Railway will assign via PORT env var)
 EXPOSE 5000
 
-# Run Flask app
-CMD ["python", "app.py"]
+# Create a startup script to verify Azure CLI is available at runtime
+RUN echo '#!/bin/bash' > /app/start.sh && \
+    echo 'echo "=== Runtime diagnostics ===" && \
+echo "PATH: $PATH" && \
+echo "Checking for az command..." && \
+which az && az --version || echo "WARNING: az command not found" && \
+echo "Starting Flask app..." && \
+exec python app.py' >> /app/start.sh && \
+    chmod +x /app/start.sh
+
+# Run Flask app via startup script for diagnostics
+CMD ["/app/start.sh"]
