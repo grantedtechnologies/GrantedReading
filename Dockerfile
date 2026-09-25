@@ -12,8 +12,10 @@ RUN apt-get update && apt-get install -y \
 # Install Azure CLI from official Microsoft repository using the install script
 RUN curl -sL https://aka.ms/InstallAzureCliDeb | bash
 
-# Verify Azure CLI installation
-RUN az --version && which az
+# Verify Azure CLI installation and try to login (this helps validate it's working)
+RUN az --version
+RUN which az
+RUN az config set core.allow_broker=false || true
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
@@ -32,17 +34,5 @@ RUN python -c "from reading_level._nlp import get_sentence_encoder; get_sentence
 # Expose Flask port (Railway will assign via PORT env var)
 EXPOSE 5000
 
-# Create a startup script to verify Azure CLI is available at runtime
-RUN cat > /app/start.sh << 'EOF'
-#!/bin/bash
-echo "=== Runtime diagnostics ==="
-echo "PATH: $PATH"
-echo "Checking for az command..."
-which az && az --version || echo "WARNING: az command not found"
-echo "Starting Flask app..."
-exec python app.py
-EOF
-RUN chmod +x /app/start.sh
-
-# Run Flask app via startup script for diagnostics
-CMD ["/app/start.sh"]
+# Run Flask app
+CMD ["python", "app.py"]
