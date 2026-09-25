@@ -2,24 +2,25 @@ FROM python:3.12
 
 WORKDIR /app
 
-# Install system dependencies including everything Azure CLI needs
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip first
+# Install Azure CLI from official Microsoft repository using the install script
+RUN curl -sL https://aka.ms/InstallAzureCliDeb | bash
+
+# Verify Azure CLI installation
+RUN az --version && which az
+
+# Upgrade pip
 RUN pip install --upgrade pip setuptools wheel
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Azure CLI
-RUN pip install --no-cache-dir azure-cli
-
-# Verify Azure CLI is installed and in PATH
-RUN az --version || (which az && echo "az found at: $(which az)") || echo "WARNING: az not found"
 
 # Download required spacy and nltk models for reading level analysis
 RUN python -m spacy download en_core_web_md
