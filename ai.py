@@ -8,7 +8,7 @@ import threading
 import file
 import requests
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import ClientSecretCredential
 from dotenv import load_dotenv
 
 import ai_rewrite
@@ -68,6 +68,13 @@ def ensure_ai_configured():
         missing.append("FLUX_API_URL")
     if not FLUX_MODEL:
         missing.append("FLUX_MODEL")
+    # Azure Service Principal authentication
+    if not os.getenv("AZURE_CLIENT_ID"):
+        missing.append("AZURE_CLIENT_ID")
+    if not os.getenv("AZURE_CLIENT_SECRET"):
+        missing.append("AZURE_CLIENT_SECRET")
+    if not os.getenv("AZURE_TENANT_ID"):
+        missing.append("AZURE_TENANT_ID")
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
@@ -432,8 +439,8 @@ _openai_client = None
 
 
 def _get_openai_client():
-    """Reuse one project client. Building DefaultAzureCredential per call
-    used to spend ~8s on a dead IMDS probe before falling through to `az login`.
+    """Reuse one project client. Use explicit ClientSecretCredential for
+    Railway and other non-Azure deployments.
     """
     global _project_client, _openai_client
     if _openai_client is not None:
@@ -443,8 +450,11 @@ def _get_openai_client():
         if _openai_client is not None:
             return _project_client, _openai_client
 
-        credential = DefaultAzureCredential(
-            exclude_managed_identity_credential=not _running_on_azure(),
+        # Use explicit ClientSecretCredential with environment variables
+        credential = ClientSecretCredential(
+            tenant_id=os.getenv("AZURE_TENANT_ID"),
+            client_id=os.getenv("AZURE_CLIENT_ID"),
+            client_secret=os.getenv("AZURE_CLIENT_SECRET"),
         )
         _project_client = AIProjectClient(
             endpoint=LLM_ENDPOINT,
