@@ -3,16 +3,22 @@ import json
 import logging
 import os
 import re
+import resource
+import subprocess
+import sys
 import threading
 
 import file
 import requests
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
+from azure.identity import ClientSecretCredential
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import Timeout as RequestsTimeout
 from dotenv import load_dotenv
 
 import ai_rewrite
-from reading_level import ReadingLevelError, correct_text, score_text
+from reading_level import ReadingLevelError, correct_text, measured_without_repair, score_text
 from reading_level import bands as rl_bands
 from reading_level import config as rl_config
 from reading_level.blocks import BLOCK_TYPES, WorksheetBlock, segment_worksheet_bytes
@@ -68,11 +74,43 @@ def _llm_endpoint():
     return endpoint
 
 
+FOUNDRY_AUTH_VARS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
+
+
+def require_foundry_config():
+    """Fail at startup when the service principal or project endpoint is absent.
+
+    A blank value counts as missing. The client secret is never included in
+    the error text.
+    """
+    missing = [
+        name for name in (*FOUNDRY_AUTH_VARS, "LLM_ENDPOINT")
+        if not (os.environ.get(name) or "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variable(s): " + ", ".join(missing)
+        )
+    _llm_endpoint()
+
+
+def foundry_credential():
+    require_foundry_config()
+    return ClientSecretCredential(
+        tenant_id=os.environ["AZURE_TENANT_ID"].strip(),
+        client_id=os.environ["AZURE_CLIENT_ID"].strip(),
+        client_secret=os.environ["AZURE_CLIENT_SECRET"].strip(),
+    )
+
+
 def ensure_ai_configured():
     missing = []
+    for name in FOUNDRY_AUTH_VARS:
+        if not (os.environ.get(name) or "").strip():
+            missing.append(name)
     if not FLUX_API_KEY:
         missing.append("FLUX_API_KEY")
-    if not os.getenv("LLM_ENDPOINT", LLM_ENDPOINT):
+    if not (os.environ.get("LLM_ENDPOINT") or LLM_ENDPOINT).strip():
         missing.append("LLM_ENDPOINT")
     if not LLM_AGENT_NAME:
         missing.append("LLM_AGENT_NAME")
@@ -81,8 +119,236 @@ def ensure_ai_configured():
     if not FLUX_MODEL:
         missing.append("FLUX_MODEL")
     if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+        logger.error("AI is not configured; missing %s", ", ".join(missing))
+        raise RuntimeError(
+            "The writing assistant is not set up yet. Ask an admin to finish Azure setup."
+        )
     _llm_endpoint()
+
+
+FOUNDRY_DOWN = (
+    "Azure Foundry (the writing assistant) is not responding. "
+    "It may be down. Try again in a few minutes."
+)
+FLUX_DOWN = (
+    "Azure image generation is not responding. "
+    "The picture service may be down. Try again in a few minutes."
+)
+STORAGE_DOWN = (
+    "Azure storage is not responding. "
+    "Saved worksheets may be unavailable. Try again in a few minutes."
+)
+GENERIC_RETRY = "Something went wrong. Try again in a few minutes."
+
+_RESOURCE_DOWN = {
+    "foundry": FOUNDRY_DOWN,
+    "flux": FLUX_DOWN,
+    "storage": STORAGE_DOWN,
+}
+_RESOURCE_AUTH = {
+    "foundry": (
+        "Could not sign in to Azure Foundry. "
+        "Ask an admin to check the writing assistant credentials."
+    ),
+    "flux": (
+        "Could not sign in to Azure image generation. "
+        "Ask an admin to check the picture service credentials."
+    ),
+    "storage": (
+        "Could not sign in to Azure storage. "
+        "Ask an admin to check the storage connection."
+    ),
+}
+_RESOURCE_TIMEOUT = {
+    "foundry": "Azure Foundry took too long to respond. Try again in a few minutes.",
+    "flux": "Azure image generation took too long to respond. Try again in a few minutes.",
+    "storage": "Azure storage took too long to respond. Try again in a few minutes.",
+}
+_RESOURCE_BUSY = "Azure is busy right now. Wait a minute and try again."
+_RESOURCE_NOT_FOUND = {
+    "foundry": (
+        "Azure Foundry could not find the writing assistant. "
+        "Ask an admin to check the Foundry project."
+    ),
+    "flux": (
+        "Azure could not find the image model. "
+        "Ask an admin to check image generation setup."
+    ),
+    "storage": "That worksheet file was not found in Azure storage.",
+}
+
+
+def _error_text(exc) -> str:
+    if exc is None:
+        return ""
+    if isinstance(exc, dict):
+        nested = exc.get("error")
+        if isinstance(nested, dict):
+            return str(nested.get("message") or nested.get("code") or "")
+        if isinstance(nested, str):
+            return nested
+        return str(exc.get("message") or "")
+    if isinstance(exc, str):
+        return exc
+    return str(exc or "")
+
+
+def _error_status(exc):
+    if isinstance(exc, dict):
+        nested = exc.get("error") if isinstance(exc.get("error"), dict) else {}
+        for key in ("status", "status_code", "statusCode", "code"):
+            value = exc.get(key)
+            if value is None:
+                value = nested.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+        return None
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if isinstance(status, int):
+        return status
+    response = getattr(exc, "response", None)
+    if response is not None:
+        code = getattr(response, "status_code", None)
+        if isinstance(code, int):
+            return code
+    return None
+
+
+def _looks_like_dump(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped:
+        return True
+    if len(stripped) > 280:
+        return True
+    lowered = stripped.lower()
+    if stripped[:1] in "{[":
+        return True
+    if "traceback" in lowered or "httpresponseerror" in lowered:
+        return True
+    if "requestid" in lowered or "request id" in lowered:
+        return True
+    if "aadsts" in lowered or "error_description" in lowered:
+        return True
+    if '"error"' in lowered or "'error'" in lowered:
+        return True
+    if "has no attribute" in lowered or "object is not" in lowered:
+        return True
+    return False
+
+
+def _looks_technical(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "has no attribute",
+            "object is not",
+            "nonetype",
+            "keyerror",
+            "typeerror",
+            "indexerror",
+            "attributeerror",
+        )
+    )
+
+
+def user_error_message(exc, resource="foundry") -> str:
+    """One short sentence for the teacher. Never includes JSON or Azure dumps."""
+    kind = resource if resource in _RESOURCE_DOWN else "foundry"
+    text = _error_text(exc)
+    status = _error_status(exc)
+    if isinstance(exc, dict):
+        try:
+            lowered = json.dumps(exc).lower()
+        except TypeError:
+            lowered = text.lower()
+    else:
+        lowered = text.lower()
+        known_azure = (
+            ClientAuthenticationError,
+            HttpResponseError,
+            ServiceRequestError,
+            RequestsConnectionError,
+            RequestsTimeout,
+            TimeoutError,
+            ConnectionError,
+        )
+        if (
+            isinstance(exc, Exception)
+            and not isinstance(exc, known_azure)
+            and text
+            and not _looks_like_dump(text)
+            and not _looks_technical(text)
+        ):
+            return text
+
+    if (
+        isinstance(exc, ClientAuthenticationError)
+        or status in (401, 403)
+        or "unauthorized" in lowered
+        or "authentication" in lowered
+        or "aadsts" in lowered
+        or "invalid_client" in lowered
+        or "access denied" in lowered
+        or "not authorized" in lowered
+    ):
+        return _RESOURCE_AUTH[kind]
+
+    if (
+        isinstance(exc, (TimeoutError, RequestsTimeout))
+        or status in (408, 504)
+        or "timed out" in lowered
+        or "timeout" in lowered
+    ):
+        return _RESOURCE_TIMEOUT[kind]
+
+    if status == 429 or "too many requests" in lowered or "rate limit" in lowered:
+        return _RESOURCE_BUSY
+
+    if status == 404 or "deploymentnotfound" in lowered or "resourcenotfound" in lowered:
+        return _RESOURCE_NOT_FOUND[kind]
+
+    if (
+        isinstance(exc, (HttpResponseError, ServiceRequestError, RequestsConnectionError))
+        or status in (500, 502, 503)
+        or "connection" in lowered
+        or "temporarily unavailable" in lowered
+        or "service unavailable" in lowered
+        or "foundry" in lowered
+        or "azure" in lowered
+        or "flux" in lowered
+        or "blob" in lowered
+    ):
+        return _RESOURCE_DOWN[kind]
+
+    return GENERIC_RETRY
+
+
+def process_ram_mb() -> int:
+    """Resident memory of this process, as a whole number of megabytes."""
+    return max(1, round(_rss_bytes() / (1024 * 1024)))
+
+
+def _rss_bytes() -> int:
+    statm = "/proc/self/statm"
+    if os.path.exists(statm):
+        page = os.sysconf("SC_PAGE_SIZE") or 4096
+        with open(statm, encoding="utf-8") as handle:
+            parts = handle.read().split()
+        return int(parts[1]) * page
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            text=True,
+        ).strip()
+        return int(out.split()[0]) * 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            return int(usage)
+        return int(usage) * 1024
 
 
 _PHONICS_CHUNK = re.compile(r"[A-Za-z]{2,12}")
@@ -196,6 +462,9 @@ DOK_INSTRUCTIONS = {
 }
 
 
+MAX_WORKSHEET_QUESTIONS = 8
+
+
 def parse_dok_level(raw) -> int:
     """Worksheet-wide question demand. Defaults to recall (DOK 1)."""
     if raw is None or raw == "":
@@ -208,20 +477,86 @@ def parse_dok_level(raw) -> int:
     return int(match.group(0)) if match else 1
 
 
-def build_questions_prompt(story, title, dok_level):
+def parse_question_count(raw) -> int:
+    """How many comprehension questions to write. Defaults to 5."""
+    if raw is None or raw == "":
+        return 5
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return 5
+    if count < 1 or count > MAX_WORKSHEET_QUESTIONS:
+        return 5
+    return count
+
+
+def parse_dok_levels(raw) -> list[int]:
+    """One or more DOK levels. Custom mixes keep order and drop duplicates."""
+    if isinstance(raw, (list, tuple, set)):
+        levels = []
+        for item in raw:
+            level = parse_dok_level(item)
+            if level not in levels:
+                levels.append(level)
+        return levels or [1]
+    return [parse_dok_level(raw)]
+
+
+def _question_keys(count: int) -> list[str]:
+    return [f"q{index}" for index in range(1, count + 1)]
+
+
+def ordered_question_items(questions) -> list[tuple[str, str]]:
+    """Stable q1, q2, … items with non-empty stems."""
+    items = []
+    for key, value in (questions or {}).items():
+        match = re.fullmatch(r"q(\d+)", str(key), re.I)
+        if not match:
+            continue
+        stem = str(value or "").strip()
+        if stem:
+            items.append((int(match.group(1)), stem))
+    items.sort()
+    return [(f"q{number}", stem) for number, stem in items]
+
+
+def build_questions_prompt(story, title, dok_level, question_count=5, dok_levels=None):
     """Question-only prompt. The story is already written; do not rewrite it."""
-    level = parse_dok_level(dok_level)
+    count = parse_question_count(question_count)
+    levels = parse_dok_levels(dok_levels if dok_levels is not None else dok_level)
     heading = title.strip() if title else "Untitled"
+    keys_json = ",\n".join(f'    "{key}": "...?"' for key in _question_keys(count))
+    if len(levels) == 1:
+        level = levels[0]
+        demand = (
+            f"Write exactly {count} questions about the story below at DOK "
+            f"level {level}.\n\n"
+            f"{DOK_INSTRUCTIONS[level]}\n\n"
+        )
+        stem_rule = (
+            "Choose whatever stems fit this DOK level and this story."
+        )
+    else:
+        labels = ", ".join(f"DOK {level}" for level in levels)
+        demand = (
+            f"Write exactly {count} questions about the story below at mixed "
+            f"DOK levels: {labels}.\n"
+            "Mix those levels across the set. Include at least one question "
+            "at each listed DOK level when the count allows.\n\n"
+            + "\n\n".join(DOK_INSTRUCTIONS[level] for level in levels)
+            + "\n\n"
+        )
+        stem_rule = (
+            "Choose whatever stems fit the listed DOK levels and this story."
+        )
     return (
         "You are writing reading comprehension questions for a special "
         "education worksheet.\n\n"
-        f"Write exactly 5 questions about the story below at DOK level {level}.\n\n"
-        f"{DOK_INSTRUCTIONS[level]}\n\n"
+        f"{demand}"
         "Rules:\n"
-        "- Write exactly 5 questions.\n"
+        f"- Write exactly {count} questions.\n"
         "- Write ordinary comprehension questions. Do not force a Who / What / "
-        "When / Where / Why template. Choose whatever stems fit this DOK "
-        "level and this story.\n"
+        f"When / Where / Why template. {stem_rule}\n"
         "- Each question must end with a question mark.\n"
         "- Do not retell, rewrite, or continue the story.\n"
         "- Do not require facts the story does not support.\n"
@@ -233,20 +568,18 @@ def build_questions_prompt(story, title, dok_level):
         "exact shape:\n"
         "{\n"
         '  "questions": {\n'
-        '    "q1": "...?",\n'
-        '    "q2": "...?",\n'
-        '    "q3": "...?",\n'
-        '    "q4": "...?",\n'
-        '    "q5": "...?"\n'
+        f"{keys_json}\n"
         "  }\n"
         "}"
     )
 
 
-def parse_questions_output(raw_text) -> dict:
+def parse_questions_output(raw_text, question_count=5) -> dict:
     """Accept a questions object, or a full worksheet JSON that contains one."""
+    count = parse_question_count(question_count)
+    keys = _question_keys(count)
     if not raw_text or not str(raw_text).strip():
-        raise ValueError("Question generation returned empty output")
+        raise ValueError("The writing assistant returned an empty set of questions. Try generating again.")
     text = str(raw_text).strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
@@ -259,16 +592,16 @@ def parse_questions_output(raw_text) -> dict:
         questions = None
     if not isinstance(questions, dict):
         questions = {}
-        for key in ("q1", "q2", "q3", "q4", "q5"):
+        for key in keys:
             match = re.search(rf'"{key}"\s*:\s*"((?:\\.|[^"\\])*)"', text, re.DOTALL)
             if not match:
-                raise ValueError("Could not parse generated questions")
+                raise ValueError("The writing assistant's questions could not be read. Try generating again.")
             questions[key] = json.loads(f'"{match.group(1)}"')
     cleaned = {}
-    for key in ("q1", "q2", "q3", "q4", "q5"):
+    for key in keys:
         stem = str(questions.get(key) or "").strip()
         if not stem:
-            raise ValueError(f"Missing question: {key}")
+            raise ValueError("The writing assistant left out a comprehension question. Try generating again.")
         if not stem.endswith("?"):
             stem = stem.rstrip(".!") + "?"
         cleaned[key] = stem
@@ -305,13 +638,19 @@ def _log_dok_answerability(level: int):
     )
 
 
-def generate_worksheet_questions(story, title, dok_level):
-    """Second model call: questions only, at the requested DOK level."""
-    level = parse_dok_level(dok_level)
-    prompt = build_questions_prompt(story, title, level)
+def generate_worksheet_questions(
+    story, title, dok_level, question_count=5, dok_levels=None
+):
+    """Second model call: questions only, at the requested DOK level(s)."""
+    count = parse_question_count(question_count)
+    levels = parse_dok_levels(dok_levels if dok_levels is not None else dok_level)
+    prompt = build_questions_prompt(
+        story, title, levels[0], question_count=count, dok_levels=levels
+    )
     raw_text = generate_text(prompt)
-    questions = parse_questions_output(raw_text)
-    _log_dok_answerability(level)
+    questions = parse_questions_output(raw_text, count)
+    for level in levels:
+        _log_dok_answerability(level)
     return questions
 
 
@@ -380,23 +719,39 @@ def _typical_student_age(grade) -> str | None:
     return f"{younger}-{younger + 1} year olds"
 
 
+_NO_TEXT_IN_IMAGE = (
+    "The image must be a picture only. Do not paint, overlay, or caption any "
+    "typed-out text anywhere in the image: no worksheet title, no story "
+    "sentences, no action-beat lines, no captions, no labels, no speech "
+    "bubbles with readable words, no watermarks, no signatures, and no "
+    "letters or numbers of any kind. Use the story only as a description of "
+    "what to draw, never as text to put in the picture."
+)
+
+
 def create_image_prompt(title, story, feedback=None, grade=None):
     """Illustration brief. Age the characters to the student's classroom grade,
     not their reading level — a 9th grader who reads at grade 3 still looks 14.
+
+    Do not put the title in the prompt as a label to draw. Flux treats
+    "titled '...'" as text to paint on the image.
     """
+    del title  # kept on the signature for callers; never send it to Flux
+    scene = (story or "").strip()[:200]
     classroom = _classroom_grade_label(grade)
     ages = _typical_student_age(grade)
     if classroom and ages:
         prompt = (
-            f"An educational illustration for a {classroom} classroom, "
-            f"titled '{title}'. Characters should look like typical {classroom} "
+            f"An educational illustration for a {classroom} classroom. "
+            f"Characters should look like typical {classroom} "
             f"students ({ages}): age-appropriate faces, clothing, and setting. "
             f"Do not depict younger children unless the story requires it. "
-            f"Scene: {story[:200]}"
+            f"Scene to draw: {scene} {_NO_TEXT_IN_IMAGE}"
         )
     else:
         prompt = (
-            f"An educational illustration titled '{title}'. Scene: {story[:200]}"
+            f"An educational illustration. Scene to draw: {scene} "
+            f"{_NO_TEXT_IN_IMAGE}"
         )
     if feedback:
         prompt += f" Additional instructions: {feedback.strip()}"
@@ -408,35 +763,22 @@ def validate_structure(data):
 
     for field in required:
         if field not in data:
-            raise ValueError(f"Missing field: {field}")
+            raise ValueError("The writing assistant left out part of the worksheet. Try generating again.")
 
-    questions = data["questions"]
-    for key in ["q1", "q2", "q3", "q4", "q5"]:
-        if key not in questions:
-            raise ValueError(f"Missing question: {key}")
+    if not ordered_question_items(data.get("questions")):
+        raise ValueError("The writing assistant left out a comprehension question. Try generating again.")
 
     return True
 
 
 def normalize_model_output(data):
-    return {
+    payload = {
         "Title": data["title"],
         "Story": data["story"],
-        "Q1": data["questions"]["q1"],
-        "Q2": data["questions"]["q2"],
-        "Q3": data["questions"]["q3"],
-        "Q4": data["questions"]["q4"],
-        "Q5": data["questions"]["q5"],
     }
-
-
-def _running_on_azure() -> bool:
-    """Managed identity only exists in Azure. Asking IMDS on a laptop just waits."""
-    return bool(
-        os.getenv("IDENTITY_ENDPOINT")
-        or os.getenv("MSI_ENDPOINT")
-        or os.getenv("IDENTITY_HEADER")
-    )
+    for index, (_key, stem) in enumerate(ordered_question_items(data.get("questions")), start=1):
+        payload[f"Q{index}"] = stem
+    return payload
 
 
 _client_lock = threading.Lock()
@@ -445,9 +787,7 @@ _openai_client = None
 
 
 def _get_openai_client():
-    """Reuse one project client. Building DefaultAzureCredential per call
-    used to spend ~8s on a dead IMDS probe before falling through to `az login`.
-    """
+    """Reuse one project client, authenticated as the Foundry service principal."""
     global _project_client, _openai_client
     if _openai_client is not None:
         return _project_client, _openai_client
@@ -456,16 +796,13 @@ def _get_openai_client():
         if _openai_client is not None:
             return _project_client, _openai_client
 
-        credential = DefaultAzureCredential(
-            exclude_managed_identity_credential=not _running_on_azure(),
-        )
         endpoint = _llm_endpoint()
         logger.info("Azure project endpoint: %s", endpoint)
         _project_client = AIProjectClient(
-            endpoint=endpoint,
-            credential=credential,
-            allow_preview=True,
-        )
+    endpoint=endpoint,
+    credential=foundry_credential(),
+    allow_preview=True,
+)
         _openai_client = _project_client.get_openai_client(
             agent_name=LLM_AGENT_NAME
         )
@@ -474,12 +811,14 @@ def _get_openai_client():
 
 def generate_text(prompt):
     ensure_ai_configured()
-    _, openai_client = _get_openai_client()
-
-    response = openai_client.responses.create(input=prompt)
+    try:
+        _, openai_client = _get_openai_client()
+        response = openai_client.responses.create(input=prompt)
+    except Exception as exc:
+        raise RuntimeError(user_error_message(exc, "foundry")) from exc
     text = response.output_text
     if text is None or not str(text).strip():
-        raise RuntimeError(f"Azure agent returned empty text output: {response}")
+        raise RuntimeError(FOUNDRY_DOWN)
     return text
 
 
@@ -501,25 +840,43 @@ def generate_image(image_prompt):
         "num_images": 1,
     }
 
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    data = response.json()
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+    except Exception as exc:
+        raise RuntimeError(user_error_message(exc, "flux")) from exc
+
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
 
     if response.status_code >= 400:
-        raise ValueError(f"Image generation failed: {data}")
+        payload = dict(data) if isinstance(data, dict) else {}
+        payload.setdefault("status_code", response.status_code)
+        raise RuntimeError(user_error_message(payload, "flux"))
+    if not isinstance(data, dict) or "data" not in data:
+        raise RuntimeError(
+            "Azure image generation did not return a picture. Try generating again."
+        )
 
-    if "data" not in data:
-        raise ValueError(f"Image generation failed: {data}")
-
-    img = data["data"][0]
+    try:
+        img = data["data"][0]
+    except (IndexError, KeyError, TypeError):
+        raise RuntimeError(
+            "Azure image generation did not return a picture. Try generating again."
+        )
 
     if "b64_json" in img:
         return img["b64_json"]
 
     if "url" in img:
-        img_bytes = requests.get(img["url"], timeout=60).content
+        try:
+            img_bytes = requests.get(img["url"], timeout=60).content
+        except Exception as exc:
+            raise RuntimeError(user_error_message(exc, "flux")) from exc
         return base64.b64encode(img_bytes).decode()
 
-    raise ValueError("No valid image returned")
+    raise RuntimeError("Azure image generation did not return a picture. Try generating again.")
 
 
 def parse_worksheet_output(raw_text):
@@ -562,12 +919,12 @@ def _parse_worksheet_text(output_text):
     lines = [line.strip() for line in output_text.splitlines() if line.strip()]
 
     if len(lines) < 7:
-        raise ValueError("Output too short to parse")
+        raise ValueError("The writing assistant's worksheet could not be read. Try generating again.")
 
     title = lines[0]
     question_indices = [i for i, line in enumerate(lines) if line.endswith("?")]
     if len(question_indices) < 5:
-        raise ValueError("Not enough question lines detected")
+        raise ValueError("The writing assistant did not return five questions. Try generating again.")
 
     last_five_q_indices = question_indices[-5:]
     questions = [lines[i] for i in last_five_q_indices]
@@ -662,6 +1019,8 @@ def generate_full_worksheet(
     focus_vocabulary=None,
     focus_phonics=None,
     dok_level=None,
+    question_count=None,
+    dok_levels=None,
 ):
     """Generate a worksheet, then run the reading-level pipeline on the story.
 
@@ -728,12 +1087,18 @@ def generate_full_worksheet(
             "llm_rewrite_applied": False,
         }
 
+    levels = parse_dok_levels(dok_levels if dok_levels is not None else dok_level)
+    count = parse_question_count(question_count)
     model_data["questions"] = generate_worksheet_questions(
         model_data["story"],
         model_data.get("title", ""),
-        dok_level,
+        levels[0],
+        question_count=count,
+        dok_levels=levels,
     )
-    model_data["dok_level"] = parse_dok_level(dok_level)
+    model_data["dok_level"] = levels[0] if len(levels) == 1 else None
+    model_data["dok_levels"] = levels
+    model_data["question_count"] = count
 
     pdf_bytes, image_base64 = build_pdf_bytes(model_data, grade=grade)
     return model_data, pdf_bytes, image_base64, raw_text, leveling
@@ -893,6 +1258,14 @@ def correct_with_rewrite(
     `allow_rewrite` defaults to False so the deterministic promise of this path
     holds unless a caller explicitly asks to spend a model call.
 
+    When CORRECTION_MODE is single_pass_llm, Operators A–C are skipped and
+    Operator D runs from the first diagnostics pass. score_text still reports
+    the grade. If the rewrite fails check_semantic_drift, Operator D retries
+    once; a second failure returns the original passage with
+    rewrite_rejected_semantic_drift. The iterative path is not used as a
+    fallback on that failure — that would spend the CPU the flag is meant to
+    save, on a request that already drifted.
+
     `passage_type` has no default here on purpose. This path takes arbitrary
     pasted text, so nothing in the request tells us whether it is a story or a
     science paragraph -- only the teacher knows. Omitting it warns and takes
@@ -900,7 +1273,12 @@ def correct_with_rewrite(
     facts a question set may depend on.
     """
     protected_terms = list(protected_terms or [])
-    result = correct_text(text, target_grade, protected_terms=protected_terms)
+    if rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM:
+        result = measured_without_repair(
+            text, target_grade, protected_terms=protected_terms
+        )
+    else:
+        result = correct_text(text, target_grade, protected_terms=protected_terms)
     _log_correction(result, attempt=0)
 
     outcome = ai_rewrite.RewriteOutcome(
@@ -932,7 +1310,12 @@ def _polish_rewrite_with_repair(outcome, target_grade, protected_terms):
 
     A/B only simplify, so a below-band draft is left alone. A near-miss
     like 3.66 on a 3.5 ceiling can still be nicked into band.
+
+    Skipped in single_pass_llm: that mode exists so the iterative loop does
+    not run on this request.
     """
+    if rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM:
+        return outcome
     if outcome.gate_passed or not outcome.llm_rewrite_applied:
         return outcome
     score = outcome.final_score
@@ -1011,9 +1394,14 @@ def generate_leveled_passage(
             initial_score=_score_summary(initial),
         )
 
-        result = correct_text(
-            passage, target_grade, protected_terms=protected_terms
-        )
+        if rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM:
+            result = measured_without_repair(
+                passage, target_grade, protected_terms=protected_terms
+            )
+        else:
+            result = correct_text(
+                passage, target_grade, protected_terms=protected_terms
+            )
         last_result = result
         _log_correction(result, attempt)
 
@@ -1203,7 +1591,7 @@ def convert_question_to_dok(
         if match:
             question = json.loads(f'"{match.group(1)}"').strip()
     if not question:
-        raise ValueError("Question conversion returned empty output")
+        raise ValueError("The writing assistant did not return a rewritten question. Try again.")
     if not question.endswith("?"):
         question = question.rstrip(".!") + "?"
     return question

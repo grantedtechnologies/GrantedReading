@@ -45,9 +45,10 @@
 
   .logo {
     display: block;
-    height: 56px;
-    width: auto;
-    margin: 0 auto 18px;
+    width: 100%;
+    max-width: 380px;
+    height: auto;
+    margin: 0 auto 8px;
   }
 
   h1 {
@@ -117,6 +118,14 @@
     margin-bottom: 10px;
   }
 
+  .note {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
   .submit {
     width: 100%;
     border: none;
@@ -151,7 +160,7 @@
 </head>
 <body>
   <div class="card">
-    <img class="logo" src="/static/logo.png" alt="Granted Reading" />
+    <img class="logo" src="/static/logo.png?v=2" alt="Granted Reading" />
     <h1 id="heading">Create an account</h1>
 
     <div class="mode-nav" id="mode-nav">
@@ -177,6 +186,11 @@
       <div class="field">
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <p class="note hidden" id="password-hint">Use at least one letter, one number, and one symbol.</p>
+      </div>
+      <div class="field hidden" id="confirm-field">
+        <label for="confirm-password">Re-enter password</label>
+        <input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" />
       </div>
       <div id="plan-fields" class="field">
         <label>Plan</label>
@@ -194,25 +208,50 @@
             <div class="plan-note">Unlimited worksheets</div>
           </label>
         </div>
+        <p class="note">Pro goes to payment first. The confirmation email comes after that.</p>
       </div>
       <div class="error" id="error"></div>
+      <button class="submit{% if not resume_checkout %} hidden{% endif %}" id="resume-checkout" type="button">Continue to payment</button>
       <button class="submit" id="submit" type="submit">Sign up</button>
     </form>
+
+    <div id="check-email" class="hidden">
+      <p class="note" id="check-email-note">Check your inbox for a confirmation link. It expires in 24 hours.</p>
+      <div class="error" id="resend-error"></div>
+      <button class="submit" id="resend-btn" type="button">Resend email</button>
+    </div>
   </div>
 
 <script>
   let mode = {{ (initial_mode or "signup")|tojson }};
+  let pendingEmail = "";
 
   function setMode(next) {
     mode = next;
     const signingUp = mode === "signup";
+    document.getElementById("check-email").classList.add("hidden");
+    document.getElementById("auth-form").classList.remove("hidden");
+    document.getElementById("mode-nav").classList.remove("hidden");
     document.getElementById("tab-signin").classList.toggle("active", !signingUp);
     document.getElementById("tab-signup").classList.toggle("active", signingUp);
     document.getElementById("name-fields").classList.toggle("hidden", !signingUp);
     document.getElementById("plan-fields").classList.toggle("hidden", !signingUp);
+    document.getElementById("confirm-field").classList.toggle("hidden", !signingUp);
+    document.getElementById("password-hint").classList.toggle("hidden", !signingUp);
+    document.getElementById("password").autocomplete = signingUp ? "new-password" : "current-password";
     document.getElementById("heading").textContent = signingUp ? "Create an account" : "Sign in";
     document.getElementById("submit").textContent = signingUp ? "Sign up" : "Sign in";
     document.getElementById("error").textContent = "";
+  }
+
+  function showCheckEmail(email) {
+    pendingEmail = email;
+    document.getElementById("auth-form").classList.add("hidden");
+    document.getElementById("mode-nav").classList.add("hidden");
+    document.getElementById("check-email").classList.remove("hidden");
+    document.getElementById("heading").textContent = "Check your email";
+    document.getElementById("check-email-note").textContent =
+      `We sent a confirmation link to ${email}. It expires in 24 hours.`;
   }
 
   document.querySelectorAll('input[name="membership"]').forEach((input) => {
@@ -232,19 +271,90 @@
   document.getElementById("tab-signup").addEventListener("click", () => setMode("signup"));
   setMode(mode);
 
+  {% if show_check_email %}
+  showCheckEmail({{ pending_email|tojson }});
+  {% if email_send_failed %}
+  document.getElementById("resend-error").textContent =
+    "We could not send the confirmation email. Click Resend to try again. Your account is not verified yet.";
+  {% endif %}
+  {% endif %}
+  {% if billing_canceled %}
+  document.getElementById("error").textContent = "Checkout was canceled. You were not charged.";
+  {% endif %}
+  {% if verify_error %}
+  document.getElementById("error").textContent = "That confirmation link is invalid or expired. Sign in to send a new one.";
+  {% endif %}
+
+  document.getElementById("resume-checkout").addEventListener("click", async () => {
+    const error = document.getElementById("error");
+    const button = document.getElementById("resume-checkout");
+    button.disabled = true;
+    try {
+      const response = await fetch("/signup/checkout", { method: "POST" });
+      const data = await response.json();
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url;
+        return;
+      }
+      error.textContent = data.error || "Could not open checkout.";
+    } catch (err) {
+      error.textContent = "Could not reach the server.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.getElementById("resend-btn").addEventListener("click", async () => {
+    const error = document.getElementById("resend-error");
+    const btn = document.getElementById("resend-btn");
+    error.textContent = "";
+    btn.disabled = true;
+    try {
+      const response = await fetch("/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingEmail }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.email_sent === false) {
+        error.style.color = "";
+        error.textContent = data.error || "Could not send that email. Try again.";
+        return;
+      }
+      error.style.color = "var(--green-dark)";
+      error.textContent = "Sent again. Check your inbox.";
+    } catch (err) {
+      error.textContent = "Could not reach the server.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   document.getElementById("auth-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const error = document.getElementById("error");
     const submit = document.getElementById("submit");
     error.textContent = "";
 
+    const email = document.getElementById("email").value.trim();
     const payload = {
-      email: document.getElementById("email").value.trim(),
+      email,
       password: document.getElementById("password").value,
     };
     if (mode === "signup") {
+      const password = payload.password;
+      const confirmPassword = document.getElementById("confirm-password").value;
+      if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+        error.textContent = "Password needs a letter, a number, and a symbol.";
+        return;
+      }
+      if (password !== confirmPassword) {
+        error.textContent = "Those passwords do not match.";
+        return;
+      }
       payload.first_name = document.getElementById("first-name").value.trim();
       payload.last_name = document.getElementById("last-name").value.trim();
+      payload.password_confirm = confirmPassword;
       payload.membership = document.querySelector('input[name="membership"]:checked').value;
     }
 
@@ -256,8 +366,20 @@
         body: JSON.stringify(payload),
       });
       const data = await response.json();
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url;
+        return;
+      }
+      if (data.email_sent && data.needs_verification) {
+        showCheckEmail(email);
+        return;
+      }
       if (!response.ok) {
         error.textContent = data.error || "Could not complete that.";
+        return;
+      }
+      if (data.needs_verification) {
+        error.textContent = data.error || "We could not send the confirmation email. Try again.";
         return;
       }
       window.location.href = data.redirect || "/worksheet";

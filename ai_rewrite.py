@@ -7,8 +7,10 @@ never as the default.
 It lives outside reading_level/ because it makes a network call. The package
 builds the diagnosis (reading_level.diagnostics); this module constructs the
 prompt and carries the answer back to the scorer. The deterministic scorer
-stays the single source of truth: the model is never asked whether it
-succeeded. Meaning-drift verification is currently off.
+stays the single source of truth: the model is never asked what grade the
+output is, and is never allowed to report one. Meaning-drift verification
+runs after every rewrite in single_pass_llm; the iterative escalation path
+still gates on score_text landing in band.
 """
 
 from __future__ import annotations
@@ -20,10 +22,11 @@ import re
 from dataclasses import dataclass, field
 
 from reading_level import bands as rl_bands
-from reading_level import config as rl_config
 from reading_level import build_diagnostics, score_text
+from reading_level import config as rl_config
 from reading_level.diagnostics import PassageDiagnostics
 from reading_level.repair import CorrectionResult
+from reading_level.verify import check_semantic_drift
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +99,8 @@ REWRITE_INVARIANTS = """These hold no matter which kind of passage this is:
 - Do not add new information, examples, or conclusions."""
 
 REWRITE_OUTPUT_FORMAT = """Respond with ONLY valid JSON (no markdown, no extra text) in this exact shape:
-{"passage": "The rewritten passage as a single paragraph."}"""
+{"passage": "The rewritten passage as a single paragraph."}
+Do not include a grade, reading level, estimated_grade, or any claim about how hard the passage is. Return the passage text only."""
 
 _FREEDOM_BY_TYPE = {
     rl_config.PASSAGE_TYPE_NARRATIVE: NARRATIVE_FREEDOM,
@@ -127,6 +131,7 @@ class RewriteOutcome:
     llm_attempts: int = 0
     naturalness: dict | None = None
     rewrite_attempts: list = field(default_factory=list)
+    drift_report: object | None = None
 
     # The deterministic record stays reachable unchanged: the rewrite pass adds
     # to the story of a correction, it does not replace it.
@@ -390,6 +395,8 @@ def parse_rewrite_output(raw_text: str) -> str:
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict) and parsed.get("passage"):
+            # Drop any grade/level fields the model added. score_text is the
+            # only source of the reported grade.
             return str(parsed["passage"]).strip()
     except json.JSONDecodeError:
         pass
@@ -483,6 +490,7 @@ def escalate_to_rewrite(
     )
 
     feedback = None
+    verify_drift = rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM
     for attempt in range(1, budget + 1):
         diagnostics = build_diagnostics(
             correction.text,
@@ -510,6 +518,34 @@ def escalate_to_rewrite(
 
         score = score_text(candidate, table=table)
         in_band = rl_bands.in_band(score, band)
+        drift = None
+        if verify_drift:
+            drift = check_semantic_drift(
+                correction.original_text,
+                candidate,
+                protected_terms=protected,
+                passage_type=diagnostics.passage_type,
+            )
+            outcome.drift_report = drift
+            _log(
+                "rewrite_drift_check",
+                attempt=attempt,
+                passed=drift.passed,
+                reasons=drift.reasons,
+            )
+            if not drift.passed:
+                feedback = (
+                    "the rewrite drifted from the original: "
+                    + "; ".join(drift.reasons)
+                )
+                record = RewriteAttempt(
+                    attempt=attempt,
+                    text=candidate,
+                    estimated_grade=score.estimated_grade,
+                    in_band=False,
+                )
+                outcome.rewrite_attempts.append(record)
+                continue
 
         _log(
             "rewrite_attempt",
@@ -540,7 +576,15 @@ def escalate_to_rewrite(
         feedback = _rejection_feedback(score, band)
 
     outcome.failure_reason = "rewrite_rejected_out_of_band"
-    if keep_closest and outcome.rewrite_attempts:
+    if verify_drift and outcome.drift_report is not None and not outcome.drift_report.passed:
+        outcome.failure_reason = "rewrite_rejected_semantic_drift"
+        # Keep the original uncorrected passage. A drifted rewrite is worse
+        # than an honest "still above band" on the source.
+        outcome.text = correction.original_text
+        outcome.final_score = correction.initial_score
+        outcome.llm_rewrite_applied = False
+        outcome.gate_passed = correction.gate_passed
+    elif keep_closest and outcome.rewrite_attempts:
         best = _closest_attempt(outcome.rewrite_attempts, band)
         outcome.text = best.text
         outcome.final_score = score_text(best.text, table=table)

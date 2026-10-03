@@ -118,6 +118,9 @@ QUESTION_FIELDS = [
     ("Q3", "Question 3"),
     ("Q4", "Question 4"),
     ("Q5", "Question 5"),
+    ("Q6", "Question 6"),
+    ("Q7", "Question 7"),
+    ("Q8", "Question 8"),
 ]
 
 _GENERIC_TITLES = {"leveled worksheet", "worksheet"}
@@ -165,19 +168,23 @@ def build_worksheet_html(data, include_image_slot=False):
         """
 
     questions_html = []
-    for index, (key, _label) in enumerate(QUESTION_FIELDS, start=1):
-        question = html.escape(str(data.get(key, "")))
+    number = 1
+    for key, _label in QUESTION_FIELDS:
+        question = str(data.get(key, "")).strip()
+        if not question:
+            continue
         questions_html.append(
             f"""
             <div class="question">
               <div>
-                <span class="question-number">{index}.</span>
-                <span class="question-text">{question}</span>
+                <span class="question-number">{number}.</span>
+                <span class="question-text">{html.escape(question)}</span>
               </div>
               <div class="answer-line"></div>
             </div>
             """
         )
+        number += 1
 
     return f"""
     <div class="worksheet">
@@ -276,8 +283,8 @@ def blocks_to_worksheet_data(title, blocks):
     """Map typed blocks onto the generated-worksheet fields.
 
     Generated PDFs use one HTML skeleton (Name/Date lines, title, story +
-    200px image slot, five questions with answer lines). Rebuilds should
-    reuse that skeleton and only swap Title / Story / Q1–Q5 / image.
+    200px image slot, questions with answer lines). Rebuilds should
+    reuse that skeleton and only swap Title / Story / Q1–Q8 / image.
     Returns None when the sheet is not that shape (e.g. multiple-choice).
     """
     items = [_as_block_dict(block) for block in (blocks or [])]

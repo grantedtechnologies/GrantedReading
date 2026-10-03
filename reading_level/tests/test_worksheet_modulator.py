@@ -414,7 +414,7 @@ def test_generated_sheet_rebuild_keeps_template_html_and_image_slot():
     assert "answer-line" in html
     assert "image-slot" in html
     assert "Leveled worksheet" not in html
-    assert html.count("class=\"question\"") == 5
+    assert html.count("class=\"question\"") == 2
 
     pdf_bytes = worksheet_file.generate_blocks_pdf("Leveled worksheet", blocks)
     import pymupdf as fitz

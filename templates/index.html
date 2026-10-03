@@ -21,7 +21,7 @@
     --bg:           #f3f4f6;
     --white:        #ffffff;
     --sidebar-w:    260px;
-    --header-h:     72px;
+    --header-h:     108px;
     --radius:       10px;
     --font:         'Nunito', sans-serif;
     --font-body:    'Nunito Sans', sans-serif;
@@ -58,7 +58,7 @@
   .hamburger span { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; }
 
   .logo-link { display: flex; align-items: center; text-decoration: none; }
-  .logo-img { height: 64px; width: auto; display: block; }
+  .logo-img { height: 100px; width: auto; display: block; }
 
   .app-nav { display: flex; align-items: center; gap: 4px; }
 
@@ -132,7 +132,7 @@
 
   .main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; }
 
-  .prompt-panel, .preview-panel { padding: 36px 32px; border-right: 1px solid var(--border); }
+  .prompt-panel, .preview-panel { padding: 36px 32px; border-right: 1px solid var(--border); overflow: visible; }
   .review-panel { padding: 36px 32px; }
 
   .panel-title {
@@ -145,6 +145,43 @@
     border-radius: 14px; padding: 24px;
   }
 
+  .form-section-label {
+    font-family: var(--font);
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin: 0 0 18px;
+  }
+  .form-section-label.required { color: var(--green); }
+  .form-section-label.optional {
+    color: var(--muted);
+    margin: 8px 0 16px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  .dok-types {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .dok-type {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  .dok-type input { margin-top: 2px; }
+
   .field { margin-bottom: 20px; }
 
   .field-label {
@@ -152,11 +189,69 @@
     color: var(--ink); margin-bottom: 7px;
   }
 
-  .grade-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 7px; }
+  .field-label-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+    position: relative;
+  }
+  .field-label-row .field-label { margin-bottom: 0; }
+
+  .info-tip { display: inline-flex; flex-shrink: 0; }
+  .info-tip-btn {
+    width: 18px; height: 18px; padding: 0;
+    border: 1.5px solid var(--muted); border-radius: 50%;
+    background: var(--white); color: var(--muted);
+    font-family: var(--font); font-size: 11px; font-weight: 800;
+    font-style: italic; line-height: 1;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .info-tip-btn:hover, .info-tip.open .info-tip-btn, .info-tip-btn:focus-visible {
+    border-color: var(--green); color: var(--green); outline: none;
+  }
+  .info-tip-bubble {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 40;
+    width: auto;
+    max-width: none;
+    background: var(--white); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.12);
+    padding: 10px 12px;
+    font-size: 12px; font-weight: 400; font-style: normal;
+    line-height: 1.45; text-align: left;
+    white-space: normal;
+    overflow: visible;
+  }
+  .info-tip-bubble::before {
+    content: "";
+    position: absolute;
+    left: 12px;
+    top: -6px;
+    width: 10px; height: 10px;
+    background: var(--white); border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    transform: rotate(45deg);
+  }
+  .info-tip:hover .info-tip-bubble,
+  .info-tip.open .info-tip-bubble,
+  .info-tip:focus-within .info-tip-bubble { display: block; }
+  .field-label-row:has(.info-tip:hover),
+  .field-label-row:has(.info-tip.open),
+  .field-label-row:has(.info-tip:focus-within) { z-index: 41; }
+
+  .grade-grid { display: flex; flex-direction: column; gap: 7px; }
+  .grade-row { display: flex; gap: 7px; }
 
   .grade-btn {
+    flex: 1;
     background: var(--bg); border: 1.5px solid var(--border);
-    border-radius: 8px; padding: 9px 4px;
+    border-radius: 8px; padding: 11px 4px;
     font-family: var(--font); font-size: 13px; font-weight: 700;
     color: var(--muted); cursor: pointer; transition: all 0.12s; text-align: center;
   }
@@ -276,6 +371,17 @@
     font-size: 13px; color: #b91c1c;
   }
 
+  .ram-stat {
+    display: none;
+    margin-top: 12px;
+    text-align: center;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
   .review-panel { display: flex; flex-direction: column; }
 
   .review-empty,
@@ -382,10 +488,8 @@
     min-height: 80px;
   }
 
-  .image-feedback-section p {
-    font-size: 12px;
-    color: var(--muted);
-    line-height: 1.4;
+  .image-feedback-section .field-label-row {
+    margin-bottom: 0;
   }
 
   .preview-panel { padding: 36px 32px; display: flex; flex-direction: column; }
@@ -444,37 +548,25 @@
     <div class="prompt-panel">
       <div class="panel-title">Prompt</div>
       <div class="form-card">
+        <div class="form-section-label required">Required</div>
 
         <div class="field">
-          <label class="field-label" for="student-select">Student</label>
+          <div class="field-label-row">
+            <label class="field-label" for="student-select">Student</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn" aria-label="About student" aria-describedby="student-hint">i</button>
+              <span class="info-tip-bubble" id="student-hint" role="tooltip">Sign in to load your students, or fill the form by hand.</span>
+            </span>
+          </div>
           <select id="student-select">
             <option value="">Choose a student…</option>
           </select>
-          <p class="field-hint" id="student-hint">Sign in to load your students, or fill the form by hand.</p>
         </div>
 
         <div class="field">
-          <label class="field-label">Student's grade</label>
-          <div class="grade-grid" id="grade-grid">
-            <button class="grade-btn" data-grade="K">K</button>
-            <button class="grade-btn" data-grade="1">1st</button>
-            <button class="grade-btn" data-grade="2">2nd</button>
-            <button class="grade-btn" data-grade="3">3rd</button>
-            <button class="grade-btn" data-grade="4">4th</button>
-            <button class="grade-btn" data-grade="5">5th</button>
-            <button class="grade-btn" data-grade="6">6th</button>
-            <button class="grade-btn" data-grade="7">7th</button>
-            <button class="grade-btn" data-grade="8">8th</button>
-            <button class="grade-btn" data-grade="9">9th</button>
-            <button class="grade-btn" data-grade="10">10th</button>
-            <button class="grade-btn" data-grade="11">11th</button>
-          </div>
-        </div>
-
-        <div class="field">
-          <label class="field-label">Reading level (grade equivalent)</label>
-          <select id="reading-level">
-            <option value="" disabled selected>Select a level…</option>
+          <label class="field-label" for="student-grade">Student's grade</label>
+          <select id="student-grade">
+            <option value="" disabled selected>Select a grade…</option>
             <option value="K">Kindergarten</option>
             <option value="1">1st grade</option>
             <option value="2">2nd grade</option>
@@ -492,14 +584,27 @@
         </div>
 
         <div class="field">
-          <label class="field-label" for="dok-level">Question DOK level</label>
-          <select id="dok-level">
-            <option value="1">DOK 1 — Recall: the answer is stated in the text</option>
-            <option value="2">DOK 2 — Basic reasoning: connect two or more details</option>
-            <option value="3">DOK 3 — Inference: draw a conclusion and cite evidence</option>
-            <option value="4">DOK 4 — Extended response: connect the story to real life</option>
-          </select>
-          <p class="field-hint">How hard the questions think, not how hard the story reads. A simpler passage can still carry a harder question.</p>
+          <label class="field-label">Reading level (grade equivalent)</label>
+          <div class="grade-grid" id="reading-level-grid">
+            <div class="grade-row">
+              <button type="button" class="grade-btn" data-grade="K">K</button>
+              <button type="button" class="grade-btn" data-grade="1">1st</button>
+              <button type="button" class="grade-btn" data-grade="2">2nd</button>
+              <button type="button" class="grade-btn" data-grade="3">3rd</button>
+              <button type="button" class="grade-btn" data-grade="4">4th</button>
+              <button type="button" class="grade-btn" data-grade="5">5th</button>
+              <button type="button" class="grade-btn" data-grade="6">6th</button>
+            </div>
+            <div class="grade-row">
+              <button type="button" class="grade-btn" data-grade="7">7th</button>
+              <button type="button" class="grade-btn" data-grade="8">8th</button>
+              <button type="button" class="grade-btn" data-grade="9">9th</button>
+              <button type="button" class="grade-btn" data-grade="10">10th</button>
+              <button type="button" class="grade-btn" data-grade="11">11th</button>
+              <button type="button" class="grade-btn" data-grade="12">12th</button>
+            </div>
+          </div>
+          <input type="hidden" id="reading-level" value="" />
         </div>
 
         <div class="field">
@@ -508,20 +613,70 @@
         </div>
 
         <div class="field">
-          <label class="field-label">Focus vocabulary (optional)</label>
-          <div class="mode-toggle vocab-mode" id="vocab-mode">
-            <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
-            <button type="button" class="mode-btn" data-vocab-mode="list" id="vocab-list-tab" disabled>Word list</button>
+          <div class="field-label-row">
+            <label class="field-label" for="dok-level">Question DOK level</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn" aria-label="About question DOK level" aria-describedby="dok-hint">i</button>
+              <span class="info-tip-bubble" id="dok-hint" role="tooltip">What kinds of questions do you want your student to answer about this story?</span>
+            </span>
           </div>
-          <input id="focus-vocabulary" type="text" placeholder="e.g. resilient" autocomplete="off" />
-          <select id="vocab-list-select" class="hidden">
-            <option value="">Choose a word list…</option>
+          <select id="dok-level">
+            <option value="1">DOK 1 — Recall: the answer is stated in the text</option>
+            <option value="2">DOK 2 — Basic reasoning: connect two or more details</option>
+            <option value="3">DOK 3 — Inference: draw a conclusion and cite evidence</option>
+            <option value="4">DOK 4 — Extended response: connect the story to real life</option>
+            <option value="custom">Custom — pick the question types</option>
           </select>
-          <p class="field-hint" id="vocab-hint">This word will appear 3–5 times in the story. It will not be simplified, even if it is hard. Separate extra words with commas.</p>
+          <div id="dok-custom-types" class="dok-types hidden">
+            <label class="dok-type"><input type="checkbox" name="dok-type" value="1" /> DOK 1 — Recall</label>
+            <label class="dok-type"><input type="checkbox" name="dok-type" value="2" /> DOK 2 — Basic reasoning</label>
+            <label class="dok-type"><input type="checkbox" name="dok-type" value="3" /> DOK 3 — Inference</label>
+            <label class="dok-type"><input type="checkbox" name="dok-type" value="4" /> DOK 4 — Extended response</label>
+          </div>
         </div>
 
         <div class="field">
-          <label class="field-label" for="focus-phonics">Focus phonics (optional)</label>
+          <label class="field-label" for="question-count">How many questions?</label>
+          <select id="question-count">
+            <option value="1">1 question</option>
+            <option value="2">2 questions</option>
+            <option value="3">3 questions</option>
+            <option value="4">4 questions</option>
+            <option value="5" selected>5 questions</option>
+            <option value="6">6 questions</option>
+            <option value="7">7 questions</option>
+            <option value="8">8 questions</option>
+          </select>
+        </div>
+
+        <div class="form-section-label optional">Optional</div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label class="field-label" for="focus-vocabulary">Focus vocabulary</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn" aria-label="About focus vocabulary" aria-describedby="vocab-hint">i</button>
+              <span class="info-tip-bubble" id="vocab-hint" role="tooltip">What vocabulary do you want included in the story? You can type them here, separated by commas. E.g. “run, jump, walk”. Each word will appear at least once.</span>
+            </span>
+          </div>
+          <div class="mode-toggle vocab-mode" id="vocab-mode">
+            <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
+            <button type="button" class="mode-btn" data-vocab-mode="list" id="vocab-list-tab" disabled>Vocab</button>
+          </div>
+          <input id="focus-vocabulary" type="text" placeholder="e.g. resilient" autocomplete="off" />
+          <select id="vocab-list-select" class="hidden">
+            <option value="">Choose vocab…</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label class="field-label" for="focus-phonics">Focus phonics</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn" aria-label="About focus phonics" aria-describedby="phonics-hint">i</button>
+              <span class="info-tip-bubble" id="phonics-hint" role="tooltip">What phonics concepts do you want to focus on? Type or select them below and they will appear in the story 3–5 times.</span>
+            </span>
+          </div>
           <div class="combo" id="phonics-combo">
             <div class="combo-input-wrap">
               <input id="focus-phonics" type="text" placeholder="e.g. tion or ing" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="phonics-list" aria-autocomplete="list" />
@@ -529,7 +684,6 @@
             </div>
             <ul class="combo-list" id="phonics-list" role="listbox" hidden></ul>
           </div>
-          <p class="field-hint">Pick a pattern or type your own. The story will use 3–5 words that contain it, and the leveler will not swap those words away.</p>
         </div>
 
         <hr class="divider" />
@@ -548,6 +702,7 @@
         <button class="generate-btn" id="generate-btn" onclick="generateWorksheet()">
           Generate
         </button>
+        <p class="ram-stat" id="ram-stat"></p>
 
       </div>
     </div>
@@ -574,7 +729,7 @@
         <div class="pdf-actions">
           <a id="download-btn" class="btn-view" download="worksheet.pdf">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            View / Print
+            <span id="download-label">Download</span>
           </a>
           <button class="btn-retry" onclick="resetForm()">Retry</button>
         </div>
@@ -605,31 +760,17 @@
           <label for="review-story">Story</label>
           <textarea id="review-story"></textarea>
         </div>
-        <div class="review-field">
-          <label for="review-who">Question 1</label>
-          <input id="review-who" type="text" />
-        </div>
-        <div class="review-field">
-          <label for="review-what">Question 2</label>
-          <input id="review-what" type="text" />
-        </div>
-        <div class="review-field">
-          <label for="review-when">Question 3</label>
-          <input id="review-when" type="text" />
-        </div>
-        <div class="review-field">
-          <label for="review-where">Question 4</label>
-          <input id="review-where" type="text" />
-        </div>
-        <div class="review-field">
-          <label for="review-why">Question 5</label>
-          <input id="review-why" type="text" />
-        </div>
+        <div id="review-questions"></div>
 
         <div class="image-feedback-section">
-          <label for="image-feedback">Illustration feedback (optional)</label>
+          <div class="field-label-row">
+            <label for="image-feedback">Illustration feedback (optional)</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn" aria-label="About illustration feedback" aria-describedby="image-hint">i</button>
+              <span class="info-tip-bubble" id="image-hint" role="tooltip">Use this when you want a new illustration. Leave blank to keep the current image when updating text only.</span>
+            </span>
+          </div>
           <textarea id="image-feedback" placeholder="e.g. Make the character younger, add a soccer ball, use brighter colors…"></textarea>
-          <p>Use this when you want a new illustration. Leave blank to keep the current image when updating text only.</p>
         </div>
 
         <div class="review-actions">
@@ -650,6 +791,62 @@
   let currentBlobUrl = null;
   let currentImageBase64 = null;
   let reviewContent = null;
+  let currentGenerationId = null;
+  let downloadInFlight = false;
+
+  async function errorFromResponse(response) {
+    try {
+      const data = await response.json();
+      if (data && typeof data.error === "string" && data.error.trim()) {
+        return data.error.trim();
+      }
+    } catch (_) {}
+    if (response.status >= 500) {
+      return "Something went wrong. Azure may be down. Try again in a few minutes.";
+    }
+    return "Something went wrong. Try again.";
+  }
+
+  function friendlyError(err) {
+    const msg = (err && err.message) || "";
+    if (msg === "Failed to fetch" || msg === "NetworkError when attempting to fetch resource.") {
+      return "Could not reach the server. Try again in a few minutes.";
+    }
+    if (msg.toLowerCase().includes("unexpected token") || msg.toLowerCase().includes("json")) {
+      return "Something went wrong. Azure may be down. Try again in a few minutes.";
+    }
+    return msg || "Something went wrong. Try again.";
+  }
+
+  async function saveAndDownload(event) {
+    const link = document.getElementById("download-btn");
+    if (!currentGenerationId) return;
+    event.preventDefault();
+    if (downloadInFlight) return;
+    downloadInFlight = true;
+    const label = document.getElementById("download-label");
+    label.textContent = "Saving…";
+    try {
+      const response = await fetch(`/worksheets/download/${currentGenerationId}`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await errorFromResponse(response));
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const temp = document.createElement("a");
+      temp.href = url;
+      temp.download = link.download || "worksheet.pdf";
+      document.body.appendChild(temp);
+      temp.click();
+      temp.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      showError(friendlyError(err));
+    } finally {
+      downloadInFlight = false;
+      label.textContent = "Download";
+    }
+  }
+  document.getElementById("download-btn").addEventListener("click", saveAndDownload);
 
   const PHONICS_OPTIONS = [
     { value: "sh", examples: "ship, fish, shed" },
@@ -816,18 +1013,39 @@
 
   initPhonicsCombo();
 
+  function selectedDokTypes() {
+    return Array.from(document.querySelectorAll('input[name="dok-type"]:checked'))
+      .map((input) => input.value);
+  }
+
+  function syncDokCustom() {
+    const custom = document.getElementById("dok-level").value === "custom";
+    document.getElementById("dok-custom-types").classList.toggle("hidden", !custom);
+  }
+
+  document.getElementById("dok-level").addEventListener("change", syncDokCustom);
+
+  function questionEntries(questions) {
+    return Object.keys(questions || {})
+      .map((key) => {
+        const match = /^q(\d+)$/i.exec(key);
+        return match ? [Number(match[1]), questions[key]] : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => left[0] - right[0]);
+  }
+
   function buildWorksheetPayload() {
+    const questions = {};
+    document.querySelectorAll("#review-questions input").forEach((input) => {
+      const number = input.id.replace("review-q", "");
+      questions[`q${number}`] = input.value.trim();
+    });
     return {
       title: document.getElementById("review-title").value.trim(),
       story: document.getElementById("review-story").value.trim(),
       grade: selectedGrade,
-      questions: {
-        q1: document.getElementById("review-who").value.trim(),
-        q2: document.getElementById("review-what").value.trim(),
-        q3: document.getElementById("review-when").value.trim(),
-        q4: document.getElementById("review-where").value.trim(),
-        q5: document.getElementById("review-why").value.trim(),
-      }
+      questions
     };
   }
 
@@ -865,8 +1083,10 @@
     };
 
     currentImageBase64 = data.image_base64 || null;
+    currentGenerationId = data.generation_id || null;
     populateReviewPanel(reviewContent);
     showPdfFromBase64(data.pdf_base64, reviewContent.title);
+    showRam(data.ram_mb);
 
     const editOpen = document.getElementById("review-form").style.display === "flex";
 
@@ -889,26 +1109,30 @@
     document.getElementById("review-intro").style.display = "block";
   }
 
-  document.querySelector(".hamburger").addEventListener("click", () => {
-    document.getElementById("sidebar").classList.toggle("open");
-  });
-
   function gradeValue(level) {
     return String(level === 0 || level === "0" ? "K" : level);
   }
 
-  function setGrade(grade) {
-    const value = gradeValue(grade);
-    selectedGrade = "";
-    document.querySelectorAll(".grade-btn").forEach((btn) => {
-      const on = btn.dataset.grade === value;
+  function setPicker(gridId, grade) {
+    const value = grade == null || grade === "" ? "" : gradeValue(grade);
+    let selected = "";
+    document.querySelectorAll(`#${gridId} .grade-btn`).forEach((btn) => {
+      const on = value !== "" && btn.dataset.grade === value;
       btn.classList.toggle("selected", on);
-      if (on) selectedGrade = value;
+      if (on) selected = value;
     });
+    return selected;
+  }
+
+  function setGrade(grade) {
+    const select = document.getElementById("student-grade");
+    const value = grade == null || grade === "" ? "" : gradeValue(grade);
+    select.value = value;
+    selectedGrade = select.value;
   }
 
   function setReadingLevel(level) {
-    document.getElementById("reading-level").value = gradeValue(level);
+    document.getElementById("reading-level").value = setPicker("reading-level-grid", level);
   }
 
   function setVocabMode(mode) {
@@ -919,15 +1143,12 @@
     });
     document.getElementById("focus-vocabulary").classList.toggle("hidden", !typing);
     document.getElementById("vocab-list-select").classList.toggle("hidden", typing);
-    document.getElementById("vocab-hint").textContent = typing
-      ? "This word will appear 3–5 times in the story. It will not be simplified, even if it is hard. Separate extra words with commas."
-      : "The story will use the words from this list. They will not be simplified.";
   }
 
   function fillVocabLists(lists) {
     const select = document.getElementById("vocab-list-select");
     const tab = document.getElementById("vocab-list-tab");
-    select.innerHTML = '<option value="">Choose a word list…</option>';
+    select.innerHTML = '<option value="">Choose vocab…</option>';
     (lists || []).forEach((list) => {
       const option = document.createElement("option");
       option.value = String(list.vocab_list_id);
@@ -951,9 +1172,12 @@
     fillVocabLists(student.vocab_lists);
   }
 
-  document.querySelectorAll(".grade-btn").forEach(btn => {
+  document.getElementById("student-grade").addEventListener("change", (event) => {
+    selectedGrade = event.target.value;
+  });
+  document.querySelectorAll("#reading-level-grid .grade-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      setGrade(btn.dataset.grade);
+      setReadingLevel(btn.dataset.grade);
     });
   });
 
@@ -962,6 +1186,21 @@
       if (btn.disabled) return;
       setVocabMode(btn.dataset.vocabMode);
     });
+  });
+
+  document.querySelectorAll(".info-tip").forEach((tip) => {
+    const btn = tip.querySelector(".info-tip-btn");
+    if (!btn) return;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const shouldOpen = !tip.classList.contains("open");
+      document.querySelectorAll(".info-tip.open").forEach((other) => other.classList.remove("open"));
+      tip.classList.toggle("open", shouldOpen);
+    });
+  });
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".info-tip.open").forEach((tip) => tip.classList.remove("open"));
   });
 
   document.getElementById("student-select").addEventListener("change", (event) => {
@@ -983,11 +1222,13 @@
       students.forEach((student) => {
         const option = document.createElement("option");
         option.value = String(student.student_id);
-        option.textContent = `${student.first_name} ${student.last_name}`;
+        option.textContent = student.class_name
+          ? `${student.first_name} ${student.last_name} · ${student.class_name}`
+          : `${student.first_name} ${student.last_name}`;
         select.appendChild(option);
       });
       hint.textContent = students.length
-        ? "Pick a student to fill grade, reading level, and word lists."
+        ? "Pick a student to fill grade, reading level, and vocab."
         : "No students yet. Fill the form by hand.";
     } catch (err) {
       hint.textContent = "Could not load students. Fill the form by hand.";
@@ -1016,21 +1257,30 @@
     const readingLevel = document.getElementById("reading-level").value;
     const interests    = document.getElementById("interests").value.trim();
     let focusVocabulary = document.getElementById("focus-vocabulary").value.trim();
+    let vocabListId = null;
     if (vocabMode === "list" && selectedStudent) {
       const listId = document.getElementById("vocab-list-select").value;
       const vocabList = (selectedStudent.vocab_lists || []).find(
         (item) => String(item.vocab_list_id) === listId
       );
+      vocabListId = listId || null;
       focusVocabulary = vocabList ? vocabList.words.join(", ") : "";
     }
     const focusPhonics = document.getElementById("focus-phonics").value.trim();
     const dokLevel = document.getElementById("dok-level").value;
+    const questionCount = document.getElementById("question-count").value;
+    const dokLevels = dokLevel === "custom" ? selectedDokTypes() : [dokLevel];
     const errorBox     = document.getElementById("error-box");
     errorBox.style.display = "none";
+    showRam(null);
 
     if (!selectedGrade) { showError("Please select the student's grade."); return; }
     if (!readingLevel)  { showError("Please select a reading level."); return; }
     if (!interests)     { showError("Please describe the student's interests."); return; }
+    if (dokLevel === "custom" && !dokLevels.length) {
+      showError("Pick at least one question type.");
+      return;
+    }
 
     const btn = document.getElementById("generate-btn");
     btn.disabled = true;
@@ -1054,15 +1304,18 @@
           interests,
           focus_vocabulary: focusVocabulary,
           focus_phonics: focusPhonics,
-          dok_level: dokLevel
+          dok_level: dokLevel,
+          dok_levels: dokLevels,
+          question_count: Number(questionCount),
+          student_id: selectedStudent ? selectedStudent.student_id : null,
+          vocab_list_id: vocabListId
         })
       });
 
       clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Unknown server error");
+        throw new Error(await errorFromResponse(response));
       }
 
       const data = await response.json();
@@ -1071,7 +1324,7 @@
 
     } catch (err) {
       clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
-      showError(err.message);
+      showError(friendlyError(err));
       statusArea.style.display = "none";
     }
 
@@ -1082,11 +1335,17 @@
   function populateReviewPanel(content) {
     document.getElementById("review-title").value = content.title;
     document.getElementById("review-story").value = content.story;
-    document.getElementById("review-who").value = content.questions.q1;
-    document.getElementById("review-what").value = content.questions.q2;
-    document.getElementById("review-when").value = content.questions.q3;
-    document.getElementById("review-where").value = content.questions.q4;
-    document.getElementById("review-why").value = content.questions.q5;
+    const box = document.getElementById("review-questions");
+    const entries = questionEntries(content.questions || {});
+    box.innerHTML = entries.map(([number]) => `
+      <div class="review-field">
+        <label for="review-q${number}">Question ${number}</label>
+        <input id="review-q${number}" type="text" />
+      </div>
+    `).join("");
+    entries.forEach(([number, text]) => {
+      document.getElementById(`review-q${number}`).value = text || "";
+    });
   }
 
   async function updatePdf(regenerateImage) {
@@ -1116,6 +1375,7 @@
     if (regenerateImage) {
       payload.image_feedback = imageFeedback;
     }
+    payload.generation_id = currentGenerationId;
 
     try {
       const response = await fetch("/update-pdf", {
@@ -1125,14 +1385,13 @@
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Unknown server error");
+        throw new Error(await errorFromResponse(response));
       }
 
       const data = await response.json();
       showWorksheetResult(data);
     } catch (err) {
-      showError(err.message);
+      showError(friendlyError(err));
     } finally {
       updateBtn.disabled = false;
       regenBtn.disabled = false;
@@ -1145,6 +1404,7 @@
     if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
     currentBlobUrl = null;
     currentImageBase64 = null;
+    currentGenerationId = null;
     reviewContent = null;
 
     document.getElementById("pdf-section").style.display = "none";
@@ -1156,9 +1416,22 @@
     document.getElementById("status-area").style.display = "none";
     document.getElementById("error-box").style.display = "none";
     document.getElementById("image-feedback").value = "";
+    showRam(null);
     const btn = document.getElementById("generate-btn");
     btn.disabled = false;
     btn.innerHTML = "Generate";
+  }
+
+  function showRam(mb) {
+    const el = document.getElementById("ram-stat");
+    if (!el) return;
+    if (mb == null || mb === "") {
+      el.textContent = "";
+      el.style.display = "none";
+      return;
+    }
+    el.textContent = `${mb} MB`;
+    el.style.display = "block";
   }
 
   function showError(msg) {

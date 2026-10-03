@@ -19,7 +19,7 @@
     --border: #e5e7eb;
     --bg: #f3f4f6;
     --white: #ffffff;
-    --header-h: 72px;
+    --header-h: 108px;
     --radius: 10px;
     --font: 'Nunito', sans-serif;
     --font-body: 'Nunito Sans', sans-serif;
@@ -51,7 +51,7 @@
   }
   .hamburger span { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; }
   .logo-link { display: flex; align-items: center; text-decoration: none; }
-  .logo-img { height: 64px; width: auto; display: block; }
+  .logo-img { height: 100px; width: auto; display: block; }
   .app-nav { display: flex; align-items: center; gap: 4px; }
   .app-nav-link {
     font-family: var(--font);
@@ -148,6 +148,9 @@
     cursor: pointer;
     text-align: center;
     background: var(--bg);
+    font-family: inherit;
+    color: inherit;
+    width: 100%;
   }
   .plan-card.selected { border-color: var(--green); background: var(--green-light); }
   .plan-card input { display: none; }
@@ -164,6 +167,8 @@
     font-size: 14px;
     padding: 10px 16px;
     cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
   }
   .submit:hover { background: var(--green-dark); }
   .submit:disabled { opacity: 0.7; cursor: wait; }
@@ -212,7 +217,7 @@
 
 <main class="page">
   <h1 class="page-title">Account</h1>
-  <p class="lead">Update your name and plan, then add students and the word lists you want to use on worksheets.</p>
+  <p class="lead">Update your name and plan.</p>
 
   <section class="card">
     <h2>Your profile</h2>
@@ -232,193 +237,33 @@
         <label for="email">Email</label>
         <input id="email" type="email" disabled />
       </div>
-      <div class="field">
-        <label>Plan</label>
-        <div class="plan-grid">
-          <label class="plan-card" id="plan-standard">
-            <input type="radio" name="membership" value="standard" />
-            <div class="plan-name">Standard</div>
-            <div class="plan-price">Free · 1 worksheet a day</div>
-          </label>
-          <label class="plan-card" id="plan-pro">
-            <input type="radio" name="membership" value="pro" />
-            <div class="plan-name">Pro</div>
-            <div class="plan-price">$5.99 · unlimited worksheets</div>
-          </label>
-        </div>
-      </div>
       <button class="submit" type="submit">Save profile</button>
       <div class="status" id="profile-status"></div>
     </form>
   </section>
 
-  <section class="card">
-    <h2>Students and word lists</h2>
-    <p class="hint">Add a student, then give them a word list with at least one word.</p>
-    <form id="student-form">
-      <div class="row">
-        <div class="field">
-          <label for="student-first">First name</label>
-          <input id="student-first" />
-        </div>
-        <div class="field">
-          <label for="student-last">Last name</label>
-          <input id="student-last" />
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label for="student-grade">Classroom grade</label>
-          <select id="student-grade"></select>
-        </div>
-        <div class="field">
-          <label for="student-level">Reading level</label>
-          <select id="student-level"></select>
-        </div>
-      </div>
-      <div class="field">
-        <label for="student-notes">Notes (optional)</label>
-        <textarea id="student-notes" placeholder="What helps this student on a worksheet"></textarea>
-      </div>
-      <button class="submit" type="submit">Add student</button>
-      <div class="status" id="student-status"></div>
-    </form>
-    <div id="student-list" style="margin-top:18px"></div>
+  <section class="card" id="billing-card" hidden>
+    <h2>Plan</h2>
+    <p class="hint" id="billing-hint">Pro is billed on Stripe.</p>
+    <div class="plan-grid">
+      <button type="button" class="plan-card" id="plan-standard">
+        <div class="plan-name">Standard</div>
+        <div class="plan-price">Free · 1 worksheet a day</div>
+      </button>
+      <button type="button" class="plan-card" id="plan-pro">
+        <div class="plan-name">Pro</div>
+        <div class="plan-price" id="plan-pro-price">$5.99 · unlimited worksheets</div>
+      </button>
+    </div>
+    <div class="status" id="billing-status"></div>
   </section>
 </main>
 
 <script>
-  const grades = [
-    { value: 0, label: "K" },
-    { value: 1, label: "1st" },
-    { value: 2, label: "2nd" },
-    { value: 3, label: "3rd" },
-    { value: 4, label: "4th" },
-    { value: 5, label: "5th" },
-    { value: 6, label: "6th" },
-    { value: 7, label: "7th" },
-    { value: 8, label: "8th" },
-    { value: 9, label: "9th" },
-    { value: 10, label: "10th" },
-    { value: 11, label: "11th" },
-    { value: 12, label: "12th" },
-  ];
-
-  let students = [];
-
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
-  function fillGradeSelect(select, selected) {
-    select.innerHTML = grades.map((grade) => {
-      const on = Number(selected) === grade.value ? " selected" : "";
-      return `<option value="${grade.value}"${on}>${grade.label}</option>`;
-    }).join("");
-  }
-
-  function gradeLabel(value) {
-    const match = grades.find((grade) => grade.value === Number(value));
-    return match ? match.label : value;
-  }
-
   function setStatus(id, message, ok) {
     const el = document.getElementById(id);
     el.textContent = message || "";
     el.className = "status " + (ok ? "ok" : "error");
-  }
-
-  function setPlan(membership) {
-    const isPro = membership === "pro";
-    document.querySelector('input[name="membership"][value="standard"]').checked = !isPro;
-    document.querySelector('input[name="membership"][value="pro"]').checked = isPro;
-    document.getElementById("plan-standard").classList.toggle("selected", !isPro);
-    document.getElementById("plan-pro").classList.toggle("selected", isPro);
-  }
-
-  function renderStudents() {
-    const box = document.getElementById("student-list");
-    if (!students.length) {
-      box.innerHTML = '<p class="empty">No students yet.</p>';
-      return;
-    }
-    box.innerHTML = students.map((student) => {
-      const lists = (student.vocab_lists || []).map((list) => `
-        <div class="list-block">
-          <div class="list-name">${escapeHtml(list.list_name)}</div>
-          <div class="words">${list.description ? escapeHtml(list.description) + " · " : ""}${
-            list.words.length ? escapeHtml(list.words.join(", ")) : "No words yet"
-          }</div>
-          <form class="inline add-words-form" data-list-id="${list.vocab_list_id}">
-            <input name="words" placeholder="Add words, comma separated" />
-            <button class="submit" type="submit">Add words</button>
-          </form>
-        </div>
-      `).join("");
-      return `
-        <article class="student">
-          <h3>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</h3>
-          <p class="meta">Classroom ${escapeHtml(gradeLabel(student.classroom_grade))} · reading ${escapeHtml(gradeLabel(student.reading_level))}</p>
-          ${lists || ""}
-          <form class="add-list-form" data-student-id="${student.student_id}">
-            <div class="row">
-              <div class="field">
-                <label>List name</label>
-                <input name="list_name" placeholder="Soccer words" />
-              </div>
-              <div class="field">
-                <label>Description (optional)</label>
-                <input name="description" placeholder="Keep these in stories" />
-              </div>
-            </div>
-            <div class="field">
-              <label>Words</label>
-              <textarea name="words" placeholder="goal, pass, teammate"></textarea>
-            </div>
-            <button class="submit" type="submit">Add word list</button>
-            <div class="status"></div>
-          </form>
-        </article>
-      `;
-    }).join("");
-
-    box.querySelectorAll(".add-list-form").forEach((form) => {
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const status = form.querySelector(".status");
-        status.textContent = "";
-        const response = await send("/api/vocab-lists", {
-          student_id: form.dataset.studentId,
-          list_name: form.list_name.value,
-          description: form.description.value,
-          words: form.words.value,
-        });
-        if (!response.ok) {
-          status.className = "status error";
-          status.textContent = response.error;
-          return;
-        }
-        await loadAccount();
-      });
-    });
-
-    box.querySelectorAll(".add-words-form").forEach((form) => {
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const response = await send(`/api/vocab-lists/${form.dataset.listId}/words`, {
-          words: form.words.value,
-        });
-        if (!response.ok) {
-          setStatus("student-status", response.error, false);
-          return;
-        }
-        await loadAccount();
-      });
-    });
   }
 
   async function send(url, body) {
@@ -449,25 +294,62 @@
     document.getElementById("first-name").value = teacher.first_name || "";
     document.getElementById("last-name").value = teacher.last_name || "";
     document.getElementById("email").value = teacher.email || "";
-    setPlan(teacher.membership || "standard");
     const nameEl = document.querySelector(".user-name");
     if (nameEl && teacher.first_name) {
       nameEl.textContent = `${teacher.first_name} ${teacher.last_name}`;
     }
-    const roleEl = document.querySelector(".user-role");
-    if (roleEl) {
-      roleEl.textContent = teacher.membership === "pro" ? "Pro · $5.99" : "Standard · Free";
+    renderBilling(data.billing);
+    if (billingResult === "success") {
+      const onPro = data.billing && data.billing.is_pro;
+      setStatus(
+        "billing-status",
+        onPro ? "You're on Pro." : "Payment received, but the plan has not updated yet. Refresh this page.",
+        !!onPro,
+      );
     }
-    students = data.students || [];
-    renderStudents();
   }
 
-  fillGradeSelect(document.getElementById("student-grade"), 4);
-  fillGradeSelect(document.getElementById("student-level"), 3);
+  let currentBilling = null;
 
-  document.querySelectorAll('input[name="membership"]').forEach((input) => {
-    input.addEventListener("change", () => setPlan(input.value));
+  function renderBilling(billing) {
+    const card = document.getElementById("billing-card");
+    card.hidden = !billing;
+    currentBilling = billing;
+    if (!billing) return;
+    const price = (billing.price_cents / 100).toFixed(2);
+    document.getElementById("plan-pro-price").textContent = `$${price} · unlimited worksheets`;
+    document.getElementById("plan-standard").classList.toggle("selected", !billing.is_pro);
+    document.getElementById("plan-pro").classList.toggle("selected", !!billing.is_pro);
+    document.getElementById("billing-hint").textContent = billing.is_pro
+      ? `You are on ${billing.plan_name}. Choose Standard to cancel on Stripe.`
+      : `Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}.`;
+  }
+
+  async function choosePlan(wantPro, button) {
+    if (!currentBilling || wantPro === !!currentBilling.is_pro) return;
+    const url = wantPro ? "/billing/create-checkout-session" : "/billing/create-portal-session";
+    if (!wantPro && !currentBilling.can_manage) return;
+    button.disabled = true;
+    const response = await send(url, {});
+    if (response.ok && response.data.url) {
+      window.location.href = response.data.url;
+      return;
+    }
+    button.disabled = false;
+    setStatus("billing-status", response.error, false);
+  }
+
+  document.getElementById("plan-standard").addEventListener("click", (event) => {
+    choosePlan(false, event.currentTarget);
   });
+  document.getElementById("plan-pro").addEventListener("click", (event) => {
+    choosePlan(true, event.currentTarget);
+  });
+
+  const billingResult = new URLSearchParams(window.location.search).get("billing");
+  if (billingResult === "canceled") {
+    setStatus("billing-status", "Checkout was canceled. You were not charged.", false);
+  }
 
   document.getElementById("profile-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -476,32 +358,10 @@
     const response = await send("/api/account", {
       first_name: document.getElementById("first-name").value,
       last_name: document.getElementById("last-name").value,
-      membership: document.querySelector('input[name="membership"]:checked').value,
     });
     btn.disabled = false;
     setStatus("profile-status", response.ok ? "Saved." : response.error, response.ok);
     if (response.ok) await loadAccount();
-  });
-
-  document.getElementById("student-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const btn = event.target.querySelector(".submit");
-    btn.disabled = true;
-    const response = await send("/api/students", {
-      first_name: document.getElementById("student-first").value,
-      last_name: document.getElementById("student-last").value,
-      classroom_grade: document.getElementById("student-grade").value,
-      reading_level: document.getElementById("student-level").value,
-      notes: document.getElementById("student-notes").value,
-    });
-    btn.disabled = false;
-    setStatus("student-status", response.ok ? "Student added. Add a word list below." : response.error, response.ok);
-    if (response.ok) {
-      document.getElementById("student-first").value = "";
-      document.getElementById("student-last").value = "";
-      document.getElementById("student-notes").value = "";
-      await loadAccount();
-    }
   });
 
   loadAccount();

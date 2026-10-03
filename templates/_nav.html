@@ -1,32 +1,268 @@
 <nav class="topnav">
   <div class="topnav-left">
-    <button class="hamburger" aria-label="Menu" type="button">
+    <button class="hamburger" id="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-drawer" type="button">
       <span></span><span></span><span></span>
     </button>
-    <a href="/worksheet" class="logo-link">
-      <img src="/static/logo.png" alt="Granted Reading" class="logo-img" />
-    </a>
-    <div class="app-nav">
-      <a href="/worksheet" class="app-nav-link{% if active_page == 'worksheet' %} active{% endif %}">Worksheet Generator</a>
-      <a href="/reading-level-corrector" class="app-nav-link{% if active_page == 'reading_level' %} active{% endif %}">Reading Level Corrector</a>
-      <a href="/how-reading-level-works" class="app-nav-link{% if active_page == 'how_reading_level' %} active{% endif %}">How it works</a>
-      {% if session.teacher_id %}
-      <a href="/account" class="app-nav-link{% if active_page == 'account' %} active{% endif %}">Account</a>
-      {% endif %}
-    </div>
   </div>
+  <a href="/worksheet" class="logo-link">
+    <img src="/static/logo.png?v=2" alt="Granted Reading" class="logo-img" />
+  </a>
   <div class="topnav-right">
     {% if session.teacher_name %}
-    <div>
-      <a href="/account" class="user-name">{{ session.teacher_name }}</a>
-      <div class="user-role">
-        {% if session.membership == 'pro' %}Pro · $5.99{% else %}Standard · Free{% endif %}
+    <div class="user-name">{{ session.teacher_name }}</div>
+    <div class="account-menu">
+      <button type="button" class="avatar account-menu-btn" id="account-menu-toggle" aria-label="Account menu" aria-expanded="false" aria-haspopup="true" aria-controls="account-menu">
+        {{ session.teacher_name.split()[0][0] }}{{ session.teacher_name.split()[-1][0] }}
+      </button>
+      <div class="account-menu-dropdown" id="account-menu" hidden>
+        <a href="/account">Account</a>
+        <a href="/logout">Sign out</a>
       </div>
-      <a href="/logout" class="app-nav-link" style="padding:0;font-size:12px">Sign out</a>
     </div>
-    <div class="avatar">{{ session.teacher_name.split()[0][0] }}{{ session.teacher_name.split()[-1][0] }}</div>
     {% else %}
     <a href="/login" class="app-nav-link">Sign in</a>
     {% endif %}
   </div>
 </nav>
+
+<div class="nav-backdrop" id="nav-backdrop" hidden></div>
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true">
+  <a href="/worksheet" class="app-nav-link{% if active_page == 'worksheet' %} active{% endif %}">Generator</a>
+  {% if session.teacher_id %}
+  <div class="nav-group">
+    <div class="nav-group-head-row">
+      <div class="nav-group-head{% if active_page == 'classes' %} active{% endif %}">
+        <span>Classes</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <a href="/setup" class="nav-plus" aria-label="Add a class">+</a>
+    </div>
+    <div class="nav-class-list">
+      {% if nav_classes %}
+      {% for classroom in nav_classes %}
+      <a href="/classes/{{ classroom.class_id }}" class="nav-sub{% if classroom_id is defined and classroom.class_id|int == classroom_id|int %} active{% endif %}">{{ classroom.name }}</a>
+      {% endfor %}
+      {% else %}
+      <div class="nav-sub">No classes yet</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="nav-group">
+    <a href="/worksheets/history" class="nav-group-head{% if active_page == 'history' %} active{% endif %}">
+      <span>History</span>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% if nav_recent %}
+    <div class="nav-recent">
+      {% for sheet in nav_recent %}
+      <a href="/worksheets/history" class="nav-sub">{{ sheet.title }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+  <a href="/how-reading-level-works" class="app-nav-link{% if active_page == 'how_reading_level' %} active{% endif %}">How it works</a>
+</aside>
+
+<style>
+  :root { --header-h: 108px; --gold: #e8b84a; }
+  nav.topnav {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    height: var(--header-h);
+    overflow: visible;
+  }
+  nav.topnav .topnav-left { justify-self: start; }
+  nav.topnav .logo-link {
+    justify-self: center;
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+  }
+  nav.topnav .logo-img {
+    display: block;
+    height: 60px;
+    width: auto;
+  }
+  nav.topnav .topnav-right {
+    justify-self: end;
+    overflow: visible;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  nav.topnav .app-nav-link { font-weight: 800; }
+  .account-menu { position: relative; }
+  .account-menu-btn {
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  .account-menu-dropdown {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    min-width: 168px;
+    background: var(--white, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.12);
+    padding: 6px;
+    z-index: 130;
+  }
+  .account-menu-dropdown a {
+    display: block;
+    padding: 9px 12px;
+    font-family: var(--font, 'Nunito', sans-serif);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink, #1a1a1a);
+    text-decoration: none;
+    border-radius: 8px;
+  }
+  .account-menu-dropdown a:hover {
+    background: var(--green-light, #eaf7e9);
+    color: var(--green-dark, #2d8a29);
+  }
+  @media (max-width: 640px) {
+    nav.topnav .logo-img { height: 53px; }
+  }
+  .nav-drawer {
+    position: fixed;
+    top: var(--header-h, 72px);
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    background: var(--white, #fff);
+    border-right: 1px solid var(--border, #e5e7eb);
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    z-index: 120;
+  }
+  .nav-drawer.open { transform: translateX(0); }
+  .nav-drawer .app-nav-link {
+    display: block;
+    font-family: var(--font, 'Nunito', sans-serif);
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink, #1a1a1a);
+    padding: 8px 10px;
+    border-radius: 8px;
+  }
+  .nav-drawer .app-nav-link.active,
+  .nav-drawer .app-nav-link:hover {
+    color: var(--green, #3aaa35);
+    background: var(--green-light, #eaf7e9);
+  }
+  .nav-group-head-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .nav-group-head-row .nav-group-head { flex: 1; }
+  .nav-plus {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--gold, #f5a623);
+    color: #fff;
+    font-family: var(--font, 'Nunito', sans-serif);
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 26px;
+    text-align: center;
+    text-decoration: none;
+    flex: none;
+  }
+  .nav-plus:hover { filter: brightness(0.95); }
+  .nav-class-list { display: flex; flex-direction: column; padding: 4px 0 8px; }
+  .nav-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    font-family: var(--font, 'Nunito', sans-serif);
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink, #1a1a1a);
+    text-decoration: none;
+    border-radius: 8px;
+  }
+  .nav-group-head svg { width: 18px; height: 18px; color: var(--green, #3aaa35); flex: none; }
+  .nav-group-head.active, .nav-group-head:hover { background: var(--green-light, #eaf7e9); }
+  .nav-recent { display: flex; flex-direction: column; padding: 4px 0 8px; }
+  .nav-sub {
+    display: block;
+    padding: 7px 10px 7px 22px;
+    font-family: var(--font, 'Nunito', sans-serif);
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--ink, #1a1a1a);
+    line-height: 1.3;
+    text-decoration: none;
+  }
+  .nav-sub.active { color: var(--green, #3aaa35); }
+  .nav-backdrop {
+    display: none;
+    position: fixed;
+    top: var(--header-h, 72px);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(17, 24, 39, 0.28);
+    z-index: 110;
+  }
+  .nav-backdrop.open { display: block; }
+</style>
+
+<script>
+  (function () {
+    const drawer = document.getElementById("nav-drawer");
+    const backdrop = document.getElementById("nav-backdrop");
+    const toggle = document.getElementById("nav-toggle");
+    if (drawer && backdrop && toggle) {
+      function setOpen(open) {
+        drawer.classList.toggle("open", open);
+        backdrop.classList.toggle("open", open);
+        backdrop.hidden = !open;
+        drawer.setAttribute("aria-hidden", open ? "false" : "true");
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+
+      toggle.addEventListener("click", () => setOpen(!drawer.classList.contains("open")));
+      backdrop.addEventListener("click", () => setOpen(false));
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setOpen(false);
+      });
+    }
+
+    const accountBtn = document.getElementById("account-menu-toggle");
+    const accountMenu = document.getElementById("account-menu");
+    if (accountBtn && accountMenu) {
+      function setAccountOpen(open) {
+        accountMenu.hidden = !open;
+        accountBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+
+      accountBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setAccountOpen(accountMenu.hidden);
+      });
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest(".account-menu")) setAccountOpen(false);
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setAccountOpen(false);
+      });
+    }
+  })();
+</script>

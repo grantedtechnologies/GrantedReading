@@ -20,7 +20,7 @@
     --border:       #e5e7eb;
     --bg:           #f3f4f6;
     --white:        #ffffff;
-    --header-h:     72px;
+    --header-h:     108px;
     --radius:       10px;
     --font:         'Nunito', sans-serif;
     --font-body:    'Nunito Sans', sans-serif;
@@ -55,7 +55,7 @@
   }
   .hamburger span { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; }
   .logo-link { display: flex; align-items: center; text-decoration: none; }
-  .logo-img { height: 64px; width: auto; display: block; }
+  .logo-img { height: 100px; width: auto; display: block; }
   .app-nav { display: flex; align-items: center; gap: 4px; }
   .app-nav-link {
     font-family: var(--font);
@@ -174,6 +174,17 @@
   .field-label {
     display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px;
   }
+  .grade-grid { display: flex; flex-direction: column; gap: 7px; }
+  .grade-row { display: flex; gap: 7px; }
+  .grade-btn {
+    flex: 1;
+    background: var(--bg); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 11px 4px;
+    font-family: var(--font); font-size: 13px; font-weight: 700;
+    color: var(--muted); cursor: pointer; transition: all 0.12s; text-align: center;
+  }
+  .grade-btn:hover { border-color: var(--green); color: var(--green); }
+  .grade-btn.selected { background: var(--green); border-color: var(--green); color: #fff; }
   .field-hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
   .field-error { font-size: 13px; color: #b91c1c; margin-top: 6px; display: none; }
   textarea, select, input[type="text"], input[type="number"] {
@@ -309,33 +320,37 @@
         <textarea id="passage-text" placeholder="Paste the passage to level…"></textarea>
       </div>
       <div class="field">
-        <label class="field-label" for="passage-grade">Target grade band</label>
-        <select id="passage-grade">
-          <option value="" disabled selected>Select a level…</option>
-          <option value="K">Kindergarten</option>
-          <option value="1">1st grade</option>
-          <option value="2">2nd grade</option>
-          <option value="3">3rd grade</option>
-          <option value="4">4th grade</option>
-          <option value="5">5th grade</option>
-          <option value="6">6th grade</option>
-          <option value="7">7th grade</option>
-          <option value="8">8th grade</option>
-          <option value="9">9th grade</option>
-          <option value="10">10th grade</option>
-          <option value="11">11th grade</option>
-          <option value="12">12th grade</option>
-        </select>
+        <label class="field-label">Target grade band</label>
+        <div class="grade-grid" id="passage-grade-grid">
+          <div class="grade-row">
+            <button type="button" class="grade-btn" data-grade="K">K</button>
+            <button type="button" class="grade-btn" data-grade="1">1st</button>
+            <button type="button" class="grade-btn" data-grade="2">2nd</button>
+            <button type="button" class="grade-btn" data-grade="3">3rd</button>
+            <button type="button" class="grade-btn" data-grade="4">4th</button>
+            <button type="button" class="grade-btn" data-grade="5">5th</button>
+            <button type="button" class="grade-btn" data-grade="6">6th</button>
+          </div>
+          <div class="grade-row">
+            <button type="button" class="grade-btn" data-grade="7">7th</button>
+            <button type="button" class="grade-btn" data-grade="8">8th</button>
+            <button type="button" class="grade-btn" data-grade="9">9th</button>
+            <button type="button" class="grade-btn" data-grade="10">10th</button>
+            <button type="button" class="grade-btn" data-grade="11">11th</button>
+            <button type="button" class="grade-btn" data-grade="12">12th</button>
+          </div>
+        </div>
+        <input type="hidden" id="passage-grade" value="" />
       </div>
       <div class="field">
         <label class="field-label" for="passage-protected">Protected terms (optional)</label>
         <div class="mode-toggle vocab-mode" id="passage-vocab-mode">
           <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
-          <button type="button" class="mode-btn" data-vocab-mode="list" id="passage-vocab-list-tab" disabled>Word list</button>
+            <button type="button" class="mode-btn" data-vocab-mode="list" id="passage-vocab-list-tab" disabled>Vocab</button>
         </div>
         <input id="passage-protected" type="text" placeholder="photosynthesis, resilient" />
         <select id="passage-vocab-list" class="hidden">
-          <option value="">Choose a word list…</option>
+          <option value="">Choose vocab…</option>
         </select>
         <p class="field-hint" id="passage-vocab-hint">These words stay as-is. Separate extra words with commas.</p>
       </div>
@@ -381,33 +396,37 @@
         <p class="field-error" id="source-error"></p>
       </div>
       <div class="field">
-        <label class="field-label" for="worksheet-grade">Target grade band</label>
-        <select id="worksheet-grade">
-          <option value="" disabled selected>Select a level…</option>
-          <option value="K">Kindergarten</option>
-          <option value="1">1st grade</option>
-          <option value="2">2nd grade</option>
-          <option value="3">3rd grade</option>
-          <option value="4">4th grade</option>
-          <option value="5">5th grade</option>
-          <option value="6">6th grade</option>
-          <option value="7">7th grade</option>
-          <option value="8">8th grade</option>
-          <option value="9">9th grade</option>
-          <option value="10">10th grade</option>
-          <option value="11">11th grade</option>
-          <option value="12">12th grade</option>
-        </select>
+        <label class="field-label">Target grade band</label>
+        <div class="grade-grid" id="worksheet-grade-grid">
+          <div class="grade-row">
+            <button type="button" class="grade-btn" data-grade="K">K</button>
+            <button type="button" class="grade-btn" data-grade="1">1st</button>
+            <button type="button" class="grade-btn" data-grade="2">2nd</button>
+            <button type="button" class="grade-btn" data-grade="3">3rd</button>
+            <button type="button" class="grade-btn" data-grade="4">4th</button>
+            <button type="button" class="grade-btn" data-grade="5">5th</button>
+            <button type="button" class="grade-btn" data-grade="6">6th</button>
+          </div>
+          <div class="grade-row">
+            <button type="button" class="grade-btn" data-grade="7">7th</button>
+            <button type="button" class="grade-btn" data-grade="8">8th</button>
+            <button type="button" class="grade-btn" data-grade="9">9th</button>
+            <button type="button" class="grade-btn" data-grade="10">10th</button>
+            <button type="button" class="grade-btn" data-grade="11">11th</button>
+            <button type="button" class="grade-btn" data-grade="12">12th</button>
+          </div>
+        </div>
+        <input type="hidden" id="worksheet-grade" value="" />
       </div>
       <div class="field">
         <label class="field-label" for="worksheet-protected">Protected terms (optional)</label>
         <div class="mode-toggle vocab-mode" id="worksheet-vocab-mode">
           <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
-          <button type="button" class="mode-btn" data-vocab-mode="list" id="worksheet-vocab-list-tab" disabled>Word list</button>
+            <button type="button" class="mode-btn" data-vocab-mode="list" id="worksheet-vocab-list-tab" disabled>Vocab</button>
         </div>
         <input id="worksheet-protected" type="text" />
         <select id="worksheet-vocab-list" class="hidden">
-          <option value="">Choose a word list…</option>
+          <option value="">Choose vocab…</option>
         </select>
         <p class="field-hint" id="worksheet-vocab-hint">These words stay as-is. Separate extra words with commas.</p>
       </div>
@@ -468,11 +487,6 @@
 </div>
 
 <script>
-  document.querySelector(".hamburger").addEventListener("click", () => {
-    const sidebar = document.getElementById("sidebar");
-    if (sidebar) sidebar.classList.toggle("open");
-  });
-
   const BLOCK_TYPES = ["passage", "instructions", "question", "answer_choice", "ignore"];
   const TYPE_LABELS = {
     passage: "Passage",
@@ -485,14 +499,49 @@
   let worksheetKind = "practice";
   let detectedBlocks = [];
   let worksheetPdfUrl = null;
+  let worksheetGenerationId = null;
+  let worksheetDownloadInFlight = false;
   let students = [];
   let selectedStudent = null;
   let passageVocabMode = "type";
   let worksheetVocabMode = "type";
   const confirmBtnDefault = "Looks good, continue";
 
+  async function errorFromResponse(response) {
+    try {
+      const data = await response.json();
+      if (data && typeof data.error === "string" && data.error.trim()) {
+        return data.error.trim();
+      }
+    } catch (_) {}
+    if (response.status >= 500) {
+      return "Something went wrong. Azure may be down. Try again in a few minutes.";
+    }
+    return "Something went wrong. Try again.";
+  }
+
+  function friendlyError(err) {
+    const msg = (err && err.message) || "";
+    if (msg === "Failed to fetch" || msg === "NetworkError when attempting to fetch resource.") {
+      return "Could not reach the server. Try again in a few minutes.";
+    }
+    if (msg.toLowerCase().includes("unexpected token")) {
+      return "Something went wrong. Azure may be down. Try again in a few minutes.";
+    }
+    return msg || "Something went wrong. Try again.";
+  }
+
   function gradeValue(level) {
     return String(level === 0 || level === "0" ? "K" : level);
+  }
+
+  function setGradePicker(prefix, grade) {
+    const value = grade == null || grade === "" ? "" : gradeValue(grade);
+    const input = document.getElementById(`${prefix}-grade`);
+    input.value = value;
+    document.querySelectorAll(`#${prefix}-grade-grid .grade-btn`).forEach((btn) => {
+      btn.classList.toggle("selected", value !== "" && btn.dataset.grade === value);
+    });
   }
 
   function setVocabMode(prefix, mode) {
@@ -513,7 +562,7 @@
     ["passage", "worksheet"].forEach((prefix) => {
       const select = document.getElementById(`${prefix}-vocab-list`);
       const tab = document.getElementById(`${prefix}-vocab-list-tab`);
-      select.innerHTML = '<option value="">Choose a word list…</option>';
+      select.innerHTML = '<option value="">Choose vocab…</option>';
       (lists || []).forEach((list) => {
         const option = document.createElement("option");
         option.value = String(list.vocab_list_id);
@@ -534,8 +583,8 @@
       return;
     }
     const level = gradeValue(student.reading_level);
-    document.getElementById("passage-grade").value = level;
-    document.getElementById("worksheet-grade").value = level;
+    setGradePicker("passage", level);
+    setGradePicker("worksheet", level);
     fillVocabLists(student.vocab_lists);
   }
 
@@ -563,6 +612,11 @@
         setVocabMode(prefix, btn.dataset.vocabMode);
       });
     });
+    document.querySelectorAll(`#${prefix}-grade-grid .grade-btn`).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setGradePicker(prefix, btn.dataset.grade);
+      });
+    });
   });
 
   async function loadStudents() {
@@ -579,11 +633,13 @@
       students.forEach((student) => {
         const option = document.createElement("option");
         option.value = String(student.student_id);
-        option.textContent = `${student.first_name} ${student.last_name}`;
+        option.textContent = student.class_name
+          ? `${student.first_name} ${student.last_name} · ${student.class_name}`
+          : `${student.first_name} ${student.last_name}`;
         select.appendChild(option);
       });
       hint.textContent = students.length
-        ? "Pick a student to fill the target grade and word lists. You can still change anything."
+        ? "Pick a student to fill the target grade and vocab. You can still change anything."
         : "No students yet. Fill the form by hand.";
     } catch (err) {
       hint.textContent = "Could not load students. Fill the form by hand.";
@@ -640,8 +696,8 @@
           passage_type: document.getElementById("passage-type").value || null
         })
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Correction failed");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not correct that passage.");
       document.getElementById("passage-result").classList.remove("hidden");
       const ok = data.gate_passed;
       document.getElementById("passage-status").innerHTML = ok
@@ -649,8 +705,12 @@
         : `<span class="status-fail">Still outside band (${data.reading_level.target_band})</span>`;
       document.getElementById("passage-output").textContent =
         `Before: grade ${data.initial_reading_level.estimated_grade}\nAfter: grade ${data.reading_level.estimated_grade}\n\n${data.corrected_text}`;
+      if (data.error) {
+        error.textContent = data.error;
+        error.style.display = "block";
+      }
     } catch (err) {
-      error.textContent = err.message;
+      error.textContent = friendlyError(err);
       error.style.display = "block";
     } finally {
       btn.disabled = false;
@@ -675,15 +735,15 @@
     body.append("worksheet", file);
     try {
       const response = await fetch("/segment-worksheet", { method: "POST", body });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not read that worksheet");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not read that worksheet.");
       detectedBlocks = data.blocks || [];
       renderBlocks(detectedBlocks);
       setSideMode("review");
       document.getElementById("side-loading").classList.add("hidden");
       hideWorksheetErrors();
     } catch (err) {
-      error.textContent = err.message;
+      error.textContent = friendlyError(err);
       error.style.display = "block";
     } finally {
       btn.disabled = false;
@@ -865,13 +925,42 @@
     download.download = `${safeName}.pdf`;
   }
 
+  document.getElementById("worksheet-download").addEventListener("click", async (event) => {
+    if (!worksheetGenerationId) return;
+    event.preventDefault();
+    if (worksheetDownloadInFlight) return;
+    worksheetDownloadInFlight = true;
+    const link = document.getElementById("worksheet-download");
+    link.textContent = "Saving…";
+    hideWorksheetErrors();
+    try {
+      const response = await fetch(`/worksheets/download/${worksheetGenerationId}`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await errorFromResponse(response));
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const temp = document.createElement("a");
+      temp.href = url;
+      temp.download = link.download || "worksheet.pdf";
+      document.body.appendChild(temp);
+      temp.click();
+      temp.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      showWorksheetError(friendlyError(err));
+    } finally {
+      worksheetDownloadInFlight = false;
+      link.textContent = "Download PDF";
+    }
+  });
+
   document.getElementById("confirm-blocks").addEventListener("click", async () => {
     hideWorksheetErrors();
     document.getElementById("source-error").style.display = "none";
     const targetGrade = document.getElementById("worksheet-grade").value;
     if (!targetGrade) {
       showWorksheetError("Choose a target grade level.");
-      document.getElementById("worksheet-grade").focus();
+      document.querySelector("#worksheet-grade-grid .grade-btn")?.focus();
       return;
     }
     if (worksheetKind === "test" && !document.getElementById("source-material").value.trim()) {
@@ -901,14 +990,15 @@
           dok_mix: mix,
           passage_type: document.getElementById("worksheet-type").value || null,
           convert_questions: document.getElementById("worksheet-convert").checked,
+          student_id: selectedStudent ? selectedStudent.student_id : null,
           title: ""
         })
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not level that worksheet");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not level that worksheet.");
       showWorksheetResult(data);
     } catch (err) {
-      showWorksheetError(err.message);
+      showWorksheetError(friendlyError(err));
     } finally {
       btn.disabled = false;
       btn.textContent = confirmBtnDefault;
@@ -931,6 +1021,7 @@
       status.innerHTML = `<span class="status-fail">Gate did not pass. You can still download the leveled worksheet.</span>`;
     }
     document.getElementById("worksheet-sheet").innerHTML = renderLeveledSheet(data);
+    worksheetGenerationId = data.generation_id || null;
     preparePdfDownload(data.pdf_base64, data.title);
     document.getElementById("worksheet-sheet").scrollTop = 0;
   }

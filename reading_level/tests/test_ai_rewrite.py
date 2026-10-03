@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from drift_cases import (
+    DRIFT_FACTS_INVERTED,
     INFORMATIONAL_FACT_KEPT,
     INFORMATIONAL_NUMBER_ALTERED,
     LEGIT_FULL_REWORD,
@@ -737,6 +738,27 @@ def test_dok_prompt_differs_by_level():
     assert ai.parse_dok_level("DOK 3") == 3
 
 
+def test_questions_prompt_uses_count_and_custom_levels():
+    story = "Leo asked Maya to wait."
+    three = ai.build_questions_prompt(story, "The Walk", 2, question_count=3)
+    assert "Write exactly 3 questions" in three
+    assert '"q3": "...?"' in three
+    assert '"q4"' not in three
+    custom = ai.build_questions_prompt(
+        story, "The Walk", 1, question_count=4, dok_levels=[1, 3]
+    )
+    assert "mixed DOK levels: DOK 1, DOK 3" in custom
+    assert "Recall & Reproduction" in custom
+    assert "Strategic Thinking" in custom
+    assert "Write exactly 4 questions" in custom
+
+
+def test_parse_questions_output_respects_count():
+    raw = json.dumps({"questions": {"q1": "One?", "q2": "Two?", "q3": "Three extra?"}})
+    parsed = ai.parse_questions_output(raw, question_count=2)
+    assert parsed == {"q1": "One?", "q2": "Two?"}
+
+
 def test_dok_level_does_not_change_the_story_or_the_leveler(monkeypatch):
     """Changing question demand cannot change passage generation or repair."""
     story_prompts = []
@@ -909,6 +931,116 @@ def test_corrector_path_applies_an_accepted_rewrite(mock_generate, fixture_text)
 
 
 # --------------------------------------------------------------------------
+# Feature-flagged single-pass LLM mode
+# --------------------------------------------------------------------------
+
+
+def test_default_correction_mode_is_iterative():
+    assert rl_config.correction_mode() == rl_config.CORRECTION_MODE_ITERATIVE
+
+
+def test_iterative_mode_still_runs_operators_a_through_c(
+    monkeypatch, mock_generate, fixture_text
+):
+    monkeypatch.setenv("CORRECTION_MODE", "iterative")
+    mock_generate(_rewrite_json(LEGIT_MILD_REWORD))
+
+    outcome = ai.correct_with_rewrite(
+        fixture_text("business_register"), 6, allow_rewrite=True
+    )
+
+    assert any(
+        edit.operator in {"split_sentence", "substitute_word", "simplify_clause"}
+        for edit in outcome.correction.edits
+    )
+    assert outcome.correction.iterations >= 1
+
+
+def test_single_pass_llm_never_invokes_operators_a_through_c(
+    monkeypatch, mock_generate, fixture_text
+):
+    monkeypatch.setenv("CORRECTION_MODE", "single_pass_llm")
+    mock_generate(_rewrite_json(LEGIT_MILD_REWORD))
+
+    outcome = ai.correct_with_rewrite(
+        fixture_text("business_register"), 6, allow_rewrite=True
+    )
+
+    assert outcome.correction.iterations == 0
+    assert outcome.correction.edits == []
+    assert outcome.llm_rewrite_applied is True
+    assert outcome.text == LEGIT_MILD_REWORD
+
+
+def test_single_pass_llm_response_has_no_grade_field_and_still_parses():
+    raw = json.dumps({
+        "passage": LEGIT_MILD_REWORD,
+        "grade": 2,
+        "estimated_grade": 2.1,
+        "reading_level": "grade 2",
+    })
+    assert ai_rewrite.parse_rewrite_output(raw) == LEGIT_MILD_REWORD
+    assert "grade" not in ai_rewrite.REWRITE_OUTPUT_FORMAT.split("{")[1].split("}")[0]
+
+
+def test_single_pass_reported_grade_comes_from_score_text(
+    monkeypatch, mock_generate, fixture_text, table
+):
+    monkeypatch.setenv("CORRECTION_MODE", "single_pass_llm")
+    mock_generate(_rewrite_json(LEGIT_MILD_REWORD))
+
+    outcome = ai.correct_with_rewrite(
+        fixture_text("business_register"), 6, allow_rewrite=True
+    )
+
+    measured = score_text(LEGIT_MILD_REWORD, table=table)
+    assert outcome.final_score.estimated_grade == pytest.approx(
+        measured.estimated_grade
+    )
+    assert outcome.final_score.estimated_grade != pytest.approx(2.0)
+
+
+def test_single_pass_drift_check_blocks_a_fact_inversion(
+    monkeypatch, mock_generate, fixture_text
+):
+    """Reuse the fact-inversion case from test_verify. Retry once, then keep the original."""
+    monkeypatch.setenv("CORRECTION_MODE", "single_pass_llm")
+    original = fixture_text("business_register")
+    calls = mock_generate(
+        _rewrite_json(DRIFT_FACTS_INVERTED),
+        _rewrite_json(DRIFT_FACTS_INVERTED),
+    )
+
+    outcome = ai.correct_with_rewrite(original, 6, allow_rewrite=True)
+
+    assert len(calls) == 2
+    assert outcome.llm_rewrite_applied is False
+    assert outcome.failure_reason == "rewrite_rejected_semantic_drift"
+    assert outcome.text == original
+    assert outcome.drift_report is not None
+    assert outcome.drift_report.passed is False
+
+
+def test_single_pass_does_not_polish_with_operators_a_b(monkeypatch):
+    monkeypatch.setenv("CORRECTION_MODE", "single_pass_llm")
+    band = rl_bands.target_band(3)
+    outcome = ai_rewrite.RewriteOutcome(
+        text="still too hard",
+        correction=SimpleNamespace(target_band=band, edits=[]),
+        final_score=SimpleNamespace(estimated_grade=3.66),
+        gate_passed=False,
+        failure_reason="rewrite_rejected_out_of_band",
+        llm_rewrite_applied=True,
+    )
+
+    def fail(*args, **kwargs):
+        raise AssertionError("single_pass_llm must not run Operators A/B after the rewrite")
+
+    monkeypatch.setattr(ai, "correct_text", fail)
+    assert ai._polish_rewrite_with_repair(outcome, 3, []) is outcome
+
+
+# --------------------------------------------------------------------------
 # Part 4: naturalness is sampled, non-blocking, and off by default
 # --------------------------------------------------------------------------
 
@@ -998,3 +1130,18 @@ def test_image_prompt_ages_characters_to_classroom_grade():
     kinder = ai.create_image_prompt("The Park", "Sam played tag.", grade="K")
     assert "kindergarten" in kinder
     assert "5-6 year olds" in kinder
+
+
+def test_image_prompt_does_not_ask_flux_to_paint_title_or_story_text():
+    prompt = ai.create_image_prompt(
+        "The Dinosaur's Big Roar",
+        "Tim loved to stomp in the jungle.",
+        grade="2",
+    )
+    lowered = prompt.lower()
+    assert "titled" not in lowered
+    assert "the dinosaur's big roar" not in lowered
+    assert "tim loved to stomp in the jungle" in lowered
+    assert "picture only" in lowered
+    assert "worksheet title" in lowered
+    assert "action-beat" in lowered

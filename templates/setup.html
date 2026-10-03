@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Granted Reading — Set up classes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --green: #3aaa35; --green-dark: #2d8a29; --green-light: #eaf7e9;
+    --ink: #1a1a1a; --muted: #6b7280; --border: #e5e7eb; --bg: #f3f4f6;
+    --white: #ffffff; --header-h: 108px;
+    --font: 'Nunito', sans-serif; --font-body: 'Nunito Sans', sans-serif;
+  }
+  body { font-family: var(--font-body); background: var(--bg); color: var(--ink); min-height: 100vh; }
+  .topnav { height: var(--header-h); background: var(--white); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
+  .topnav-left { display: flex; align-items: center; gap: 16px; }
+  .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 4px; }
+  .hamburger span { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; }
+  .logo-link { display: flex; align-items: center; text-decoration: none; }
+  .logo-img { height: 100px; width: auto; display: block; }
+  .app-nav-link { font-family: var(--font); font-size: 14px; font-weight: 700; color: var(--muted); text-decoration: none; padding: 8px 14px; border-radius: 8px; white-space: nowrap; }
+  .app-nav-link:hover { color: var(--green-dark); background: var(--green-light); }
+  .app-nav-link.active { color: var(--green); background: var(--green-light); }
+  .topnav-right { display: flex; align-items: center; gap: 12px; }
+  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; color: inherit; text-decoration: none; display: block; }
+  .user-role { font-size: 12px; color: var(--muted); text-align: right; }
+  .avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--green-light); border: 2px solid var(--green); display: flex; align-items: center; justify-content: center; font-family: var(--font); font-weight: 800; font-size: 14px; color: var(--green); }
+  .page { margin: var(--header-h) auto 0; padding: 40px 32px 64px; max-width: 760px; width: 100%; }
+  .page-title { font-family: var(--font); font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+  .lead { font-size: 16px; line-height: 1.6; color: var(--muted); margin-bottom: 28px; }
+  .card { background: var(--white); border: 1px solid var(--border); border-radius: 14px; padding: 24px 26px 26px; margin-bottom: 18px; }
+  h2 { font-family: var(--font); font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+  .hint { font-size: 13px; color: var(--muted); margin-bottom: 16px; line-height: 1.5; }
+  .field { margin-bottom: 14px; }
+  label { display: block; font-family: var(--font); font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  input, select, textarea { width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: var(--font-body); font-size: 15px; background: var(--white); }
+  textarea { min-height: 74px; resize: vertical; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--green); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .submit, .continue { border: none; border-radius: 8px; background: var(--green); color: white; font-family: var(--font); font-weight: 800; font-size: 14px; padding: 10px 16px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .submit:hover, .continue:hover { background: var(--green-dark); }
+  .submit:disabled { opacity: 0.7; cursor: wait; }
+  .status { font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .status.error { color: #b42318; }
+  .status.ok { color: var(--green-dark); }
+  .class-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--bg); margin-bottom: 10px; }
+  .class-name { font-family: var(--font); font-weight: 800; font-size: 15px; }
+  .class-link { color: inherit; text-decoration: none; flex: 1; min-width: 0; }
+  .class-link:hover .class-name { color: var(--green-dark); }
+  .class-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .text-btn { background: none; border: none; color: #b42318; font-family: var(--font); font-weight: 800; font-size: 13px; cursor: pointer; }
+  .empty { font-size: 14px; color: var(--muted); }
+  .actions { display: flex; justify-content: flex-end; }
+  @media (max-width: 700px) { .row { grid-template-columns: 1fr; } .page { padding: 28px 16px 48px; } }
+</style>
+</head>
+<body>
+{% include '_nav.html' %}
+
+<main class="page">
+  <h1 class="page-title">Add your classes</h1>
+  <p class="lead">{% if from_account %}Add a class for each group you teach. You can open a class from the menu later to add students.{% else %}Your email is confirmed. Add the classes you teach. You can open a class from the menu later to add students.{% endif %}</p>
+
+  <section class="card">
+    <h2>Classes</h2>
+    <p class="hint">A class can be removed here until it has a student.</p>
+    <form id="class-form">
+      <div class="row">
+        <div class="field">
+          <label for="class-name">Class name</label>
+          <input id="class-name" placeholder="1st Period ELA" />
+        </div>
+        <div class="field">
+          <label for="class-subject">Subject</label>
+          <input id="class-subject" placeholder="English" />
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="class-grade">Grade level</label>
+          <select id="class-grade"></select>
+        </div>
+        <div class="field">
+          <label for="class-year">School year</label>
+          <input id="class-year" inputmode="numeric" maxlength="4" value="2026" />
+        </div>
+      </div>
+      <button class="submit" type="submit">Add class</button>
+      <div class="status" id="class-status"></div>
+    </form>
+    <div id="class-list" style="margin-top:18px"></div>
+  </section>
+
+  <div class="actions">
+    <a class="continue" href="{{ after_setup }}">{{ after_label }}</a>
+  </div>
+</main>
+
+<script>
+  const grades = [
+    { value: 0, label: "K" },
+    { value: 1, label: "1st" }, { value: 2, label: "2nd" }, { value: 3, label: "3rd" },
+    { value: 4, label: "4th" }, { value: 5, label: "5th" }, { value: 6, label: "6th" },
+    { value: 7, label: "7th" }, { value: 8, label: "8th" }, { value: 9, label: "9th" },
+    { value: 10, label: "10th" }, { value: 11, label: "11th" }, { value: 12, label: "12th" },
+  ];
+  let classes = [];
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function fillGradeSelect(select, selected) {
+    select.innerHTML = grades.map((grade) => {
+      const on = Number(selected) === grade.value ? " selected" : "";
+      return `<option value="${grade.value}"${on}>${grade.label}</option>`;
+    }).join("");
+  }
+  function gradeLabel(value) {
+    const match = grades.find((grade) => grade.value === Number(value));
+    return match ? match.label : value;
+  }
+  function setStatus(id, message, ok) {
+    const el = document.getElementById(id);
+    el.textContent = message || "";
+    el.className = "status " + (ok ? "ok" : "error");
+  }
+  async function send(url, body) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) return { ok: false, error: data.error || "Could not save that." };
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: "Could not reach the server." };
+    }
+  }
+
+  function renderClasses() {
+    const box = document.getElementById("class-list");
+    if (!classes.length) {
+      box.innerHTML = '<p class="empty">No classes yet.</p>';
+      return;
+    }
+    box.innerHTML = classes.map((item) => `
+      <div class="class-row">
+        <a class="class-link" href="/classes/${item.class_id}">
+          <div class="class-name">${escapeHtml(item.name)}</div>
+          <div class="class-meta">${escapeHtml(item.subject)} · ${escapeHtml(gradeLabel(item.grade_level))} · ${escapeHtml(item.school_year)}</div>
+        </a>
+        <button class="text-btn remove-class" type="button" data-class-id="${item.class_id}">Remove</button>
+      </div>
+    `).join("");
+    box.querySelectorAll(".remove-class").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const response = await fetch(`/api/classes/${button.dataset.classId}`, { method: "DELETE" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setStatus("class-status", data.error || "Could not remove that class.", false);
+          return;
+        }
+        setStatus("class-status", "Class removed.", true);
+        await loadAccount();
+      });
+    });
+  }
+
+  async function loadAccount() {
+    const response = await fetch("/api/account");
+    if (response.status === 401 || response.status === 403) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    classes = data.classes || [];
+    renderClasses();
+  }
+
+  fillGradeSelect(document.getElementById("class-grade"), 4);
+
+  document.getElementById("class-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const btn = event.target.querySelector(".submit");
+    btn.disabled = true;
+    const response = await send("/api/classes", {
+      name: document.getElementById("class-name").value,
+      subject: document.getElementById("class-subject").value,
+      grade_level: document.getElementById("class-grade").value,
+      school_year: document.getElementById("class-year").value,
+    });
+    btn.disabled = false;
+    setStatus("class-status", response.ok ? "Class added." : response.error, response.ok);
+    if (response.ok) {
+      document.getElementById("class-name").value = "";
+      document.getElementById("class-subject").value = "";
+      await loadAccount();
+    }
+  });
+
+  loadAccount();
+</script>
+</body>
+</html>

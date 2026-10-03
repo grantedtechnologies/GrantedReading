@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Granted Reading — {{ classroom.name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #3aaa35;
+    --green-dark: #2d8a29;
+    --green-light: #eaf7e9;
+    --ink: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f3f4f6;
+    --white: #ffffff;
+    --gold: #e8b84a;
+    --header-h: 108px;
+    --font: 'Nunito', sans-serif;
+    --font-body: 'Nunito Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+
+  .topnav {
+    height: var(--header-h);
+    background: var(--white);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+  }
+  .topnav-left { display: flex; align-items: center; gap: 16px; }
+  .hamburger {
+    background: none; border: none; cursor: pointer;
+    display: flex; flex-direction: column; gap: 5px; padding: 4px;
+  }
+  .hamburger span { display: block; width: 22px; height: 2px; background: var(--green); border-radius: 2px; }
+  .logo-link { display: flex; align-items: center; text-decoration: none; }
+  .logo-img { height: 100px; width: auto; display: block; }
+  .app-nav-link {
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .app-nav-link:hover { color: var(--green-dark); background: var(--green-light); }
+  .app-nav-link.active { color: var(--green); background: var(--green-light); }
+  .topnav-right { display: flex; align-items: center; gap: 12px; }
+  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; color: inherit; text-decoration: none; display: block; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--green-light); border: 2px solid var(--green);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font); font-weight: 800; font-size: 14px; color: var(--green);
+  }
+
+  .page {
+    margin: var(--header-h) auto 0;
+    padding: 28px 32px 64px;
+    max-width: 1280px;
+    width: 100%;
+  }
+
+  .class-layout {
+    width: 100%;
+  }
+  .class-layout.has-profile {
+    max-width: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.9fr);
+    gap: 36px;
+    align-items: start;
+  }
+
+  .roster-col { min-width: 0; }
+  .profile-col { min-width: 0; }
+
+  .col-title {
+    font-family: var(--font);
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 22px;
+  }
+
+  .student-list { display: flex; flex-direction: column; gap: 12px; padding: 2px; }
+
+  .student-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--white);
+    border-radius: 999px;
+    padding: 14px 18px;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: 0 1px 0 rgba(17, 24, 39, 0.04);
+  }
+  .student-row.selected { box-shadow: 0 0 0 2px var(--green); }
+  .student-row.draft {
+    animation: draft-in 0.18s ease;
+  }
+  @keyframes draft-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .student-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+    text-decoration: none;
+    color: inherit;
+  }
+  .student-icon {
+    width: 22px;
+    height: 22px;
+    color: #9ca3af;
+    flex: none;
+  }
+  .student-name {
+    flex: 1;
+    font-family: var(--font);
+    font-size: 16px;
+    font-weight: 800;
+  }
+  .row-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: none;
+    color: #9ca3af;
+    cursor: pointer;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon-btn:hover { background: var(--bg); color: var(--ink); }
+  .icon-btn.danger:hover { color: #b42318; background: #fef2f2; }
+  .icon-btn svg { width: 18px; height: 18px; }
+
+  .roster-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 22px;
+  }
+  .add-student {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--gold);
+    color: #fff;
+    font-family: var(--font);
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 46px;
+    text-align: center;
+    text-decoration: none;
+    box-shadow: 0 2px 6px rgba(232, 184, 74, 0.45);
+  }
+  .add-student:hover { filter: brightness(0.96); }
+
+  .empty { font-size: 15px; color: var(--muted); padding: 8px 4px 12px; }
+  .add-vocab {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: var(--gold);
+    color: #fff;
+    font-family: var(--font);
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 38px;
+    text-align: center;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(232, 184, 74, 0.45);
+    padding: 0;
+  }
+  .add-vocab:hover { filter: brightness(0.96); }
+  #add-list-form { margin-top: 14px; }
+
+  .profile-card {
+    background: var(--white);
+    border-radius: 18px;
+    padding: 22px 22px 24px;
+    box-shadow: 0 1px 0 rgba(17, 24, 39, 0.04);
+  }
+  .vocab-wrap { margin-top: 18px; }
+  .vocab-toggle {
+    width: 100%;
+    border: none;
+    border-top: 1.5px solid var(--border);
+    border-radius: 0;
+    background: none;
+    color: var(--ink);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 2px 0;
+    font-family: var(--font);
+    font-size: 16px;
+    font-weight: 800;
+  }
+  .vocab-toggle svg { width: 18px; height: 18px; color: var(--green); flex: none; transition: transform 0.15s ease; }
+  .vocab-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .vocab-menu {
+    padding: 16px 0 0;
+  }
+  .profile-card label {
+    display: block;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .profile-card input,
+  .profile-card select,
+  .profile-card textarea {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 12px;
+    font-family: var(--font-body);
+    font-size: 15px;
+    background: var(--white);
+  }
+  .profile-card input:focus,
+  .profile-card select:focus,
+  .profile-card textarea:focus {
+    outline: none;
+    border-color: var(--green);
+  }
+  .profile-card textarea {
+    min-height: 110px;
+    resize: vertical;
+  }
+  #list-words { min-height: 74px; }
+  .field { margin-bottom: 16px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .save-btn {
+    width: 100%;
+    border: none;
+    border-radius: 10px;
+    background: var(--gold);
+    color: #fff;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 16px;
+    padding: 12px 16px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .save-btn:hover { filter: brightness(0.96); }
+  .save-btn:disabled { opacity: 0.7; cursor: wait; }
+  .status { font-size: 13px; min-height: 18px; margin-top: 10px; }
+  .status.error { color: #b42318; }
+  .status.ok { color: var(--green-dark); }
+  .profile-placeholder {
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.5;
+    padding: 12px 4px;
+  }
+  .hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; line-height: 1.45; }
+  .list-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .list-copy { flex: 1; min-width: 0; }
+  .list-name { font-family: var(--font); font-weight: 800; font-size: 14px; }
+  .words { font-size: 13px; color: var(--muted); margin: 2px 0 0; }
+  .list-block .row-actions { flex: none; }
+  .inline { display: flex; gap: 8px; }
+  .inline input { flex: 1; }
+  .submit {
+    border: none;
+    border-radius: 10px;
+    background: var(--green);
+    color: #fff;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    padding: 10px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .submit:hover { background: var(--green-dark); }
+  .submit:disabled { opacity: 0.7; cursor: wait; }
+  .vocab-section { margin-top: 8px; padding-top: 4px; }
+
+  @media (max-width: 900px) {
+    .class-layout.has-profile { grid-template-columns: 1fr; gap: 28px; }
+    .page { padding: 24px 16px 48px; }
+    .col-title { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+{% include '_nav.html' %}
+
+{% set grade_options = [
+  (0, 'K'), (1, '1st Grade'), (2, '2nd Grade'), (3, '3rd Grade'),
+  (4, '4th Grade'), (5, '5th Grade'), (6, '6th Grade'), (7, '7th Grade'),
+  (8, '8th Grade'), (9, '9th Grade'), (10, '10th Grade'), (11, '11th Grade'),
+  (12, '12th Grade')
+] %}
+{% set default_grade = classroom.grade_level if classroom.grade_level is not none else 4 %}
+{% set selected_id = selected_student.student_id if selected_student else none %}
+{% set show_form = is_new or selected_student %}
+
+<main class="page">
+  <div class="class-layout{% if show_form %} has-profile{% endif %}">
+    <section class="roster-col">
+      <h1 class="col-title">{{ classroom.name }}</h1>
+      <div class="student-list">
+        {% for student in students %}
+        {% set full_name = student.first_name if student.first_name == student.last_name else (student.first_name ~ ' ' ~ student.last_name) %}
+        <div class="student-row{% if selected_id and selected_id|int == student.student_id|int %} selected{% endif %}">
+          <a href="/classes/{{ classroom.class_id }}/students/{{ student.student_id }}" class="student-main">
+            <svg class="student-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="8" r="3.2"/>
+              <path d="M5.5 19c.8-3.2 3.3-5 6.5-5s5.7 1.8 6.5 5" stroke-linecap="round"/>
+            </svg>
+            <span class="student-name">{{ full_name }}</span>
+          </a>
+          <div class="row-actions">
+            <a class="icon-btn" href="/classes/{{ classroom.class_id }}/students/{{ student.student_id }}" aria-label="Edit {{ full_name }}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/>
+              </svg>
+            </a>
+            <button class="icon-btn danger delete-student" type="button" data-student-id="{{ student.student_id }}" data-student-name="{{ full_name }}" aria-label="Remove {{ full_name }}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h16"/>
+                <path d="M9 7V5h6v2"/>
+                <path d="M7 7l1 13h8l1-13"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        {% endfor %}
+        {% if is_new %}
+        <div class="student-row selected draft" id="draft-student-row">
+          <div class="student-main">
+            <svg class="student-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="8" r="3.2"/>
+              <path d="M5.5 19c.8-3.2 3.3-5 6.5-5s5.7 1.8 6.5 5" stroke-linecap="round"/>
+            </svg>
+            <span class="student-name" id="draft-student-name">New student</span>
+          </div>
+        </div>
+        {% elif not students %}
+        <p class="empty">No students in this class yet. Use the plus button to add one.</p>
+        {% endif %}
+      </div>
+      <div class="roster-foot">
+        <a class="add-student" href="/classes/{{ classroom.class_id }}/students/new" aria-label="Add a student">+</a>
+      </div>
+    </section>
+
+    {% if show_form %}
+    <section class="profile-col">
+      <h2 class="col-title" id="profile-title">
+        {% if is_new %}New student{% else %}{{ selected_name }}{% endif %}
+      </h2>
+      <div class="profile-card">
+      <form id="student-profile-form">
+        <div class="row">
+          <div class="field">
+            <label for="student-first">First name</label>
+            <input id="student-first" name="first_name" value="{{ selected_student.first_name if selected_student else '' }}" placeholder="Allie" autocomplete="given-name" />
+          </div>
+          <div class="field">
+            <label for="student-last">Last name</label>
+            <input id="student-last" name="last_name" value="{{ '' if not selected_student or selected_student.last_name == selected_student.first_name else selected_student.last_name }}" placeholder="Baker" autocomplete="family-name" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="student-level">Reading Level</label>
+            <select id="student-level" name="reading_level">
+              {% for value, label in grade_options %}
+              <option value="{{ value }}"{% if (selected_student.reading_level if selected_student else default_grade)|int == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="student-grade">Grade</label>
+            <select id="student-grade" name="classroom_grade">
+              {% for value, label in grade_options %}
+              <option value="{{ value }}"{% if (selected_student.classroom_grade if selected_student else default_grade)|int == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="student-notes">Notes/Interests</label>
+          <textarea id="student-notes" name="notes" placeholder="Your text here">{{ selected_student.notes if selected_student else '' }}</textarea>
+        </div>
+        <button class="save-btn" type="submit">Save</button>
+        <div class="status" id="student-status"></div>
+      </form>
+        <div class="vocab-wrap">
+          <button type="button" class="vocab-toggle" id="vocab-toggle" aria-expanded="false" aria-controls="vocab-menu">
+            <span>Vocab</span>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="vocab-menu" id="vocab-menu" hidden>
+            {% if selected_student and selected_student.vocab_lists %}
+            <div id="vocab-lists">
+              {% for list in selected_student.vocab_lists %}
+              <div class="list-block">
+                <div class="list-copy">
+                  <div class="list-name">{{ list.list_name }}</div>
+                  <div class="words">{% if list.description %}{{ list.description }} · {% endif %}{% if list.words %}{{ list.words | join(', ') }}{% else %}No words yet{% endif %}</div>
+                </div>
+                <div class="row-actions">
+                  <button class="icon-btn edit-vocab" type="button" aria-label="Edit {{ list.list_name }}" data-list-id="{{ list.vocab_list_id }}" data-list-name="{{ list.list_name }}" data-description="{{ list.description or '' }}" data-words="{{ list.words | join(', ') }}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M12 20h9"/>
+                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/>
+                    </svg>
+                  </button>
+                  <button class="icon-btn danger delete-vocab" type="button" aria-label="Remove {{ list.list_name }}" data-list-id="{{ list.vocab_list_id }}" data-list-name="{{ list.list_name }}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 7h16"/>
+                      <path d="M9 7V5h6v2"/>
+                      <path d="M7 7l1 13h8l1-13"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p class="empty">No vocab list yet</p>
+            {% endif %}
+            <button type="button" class="add-vocab" id="add-vocab-btn" aria-label="Add a vocab list" aria-expanded="false" aria-controls="add-list-form">+</button>
+            <div id="add-list-form" hidden>
+              <div class="field">
+                <label for="list-name">Name</label>
+                <input id="list-name" name="list_name" placeholder="Soccer words" />
+              </div>
+              <div class="field">
+                <label for="list-description">Description (optional)</label>
+                <input id="list-description" name="description" placeholder="Keep these in stories" />
+              </div>
+              <div class="field">
+                <label for="list-words">Words</label>
+                <textarea id="list-words" name="words" placeholder="goal, pass, teammate"></textarea>
+              </div>
+              {% if is_new %}
+              <p class="hint">Saved when you save the student.</p>
+              {% else %}
+              <button class="submit" type="button" id="add-list-btn">Save</button>
+              <div class="status" id="list-status"></div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</main>
+
+<script>
+  const classId = {{ classroom.class_id }};
+  const isNew = {{ 'true' if is_new else 'false' }};
+  const studentId = {{ selected_student.student_id if selected_student else 'null' }};
+
+  function setStatus(message, ok) {
+    const el = document.getElementById("student-status");
+    if (!el) return;
+    el.textContent = message || "";
+    el.className = "status " + (ok ? "ok" : "error");
+  }
+
+  async function send(url, body, method) {
+    try {
+      const response = await fetch(url, {
+        method: method || "POST",
+        headers: { "Content-Type": "application/json" },
+        body: method === "DELETE" ? undefined : JSON.stringify(body || {}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return { ok: false, error: data.error || "Could not save that." };
+      }
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: "Could not reach the server." };
+    }
+  }
+
+  const form = document.getElementById("student-profile-form");
+  const firstInput = document.getElementById("student-first");
+  const lastInput = document.getElementById("student-last");
+  const draftName = document.getElementById("draft-student-name");
+  const profileTitle = document.getElementById("profile-title");
+
+  function liveName() {
+    const first = (firstInput && firstInput.value.trim()) || "";
+    const last = (lastInput && lastInput.value.trim()) || "";
+    const value = [first, last].filter(Boolean).join(" ") || (isNew ? "New student" : "");
+    if (draftName) draftName.textContent = value || "New student";
+    if (profileTitle && isNew) profileTitle.textContent = value || "New student";
+  }
+
+  if (isNew) {
+    if (firstInput) firstInput.addEventListener("input", liveName);
+    if (lastInput) lastInput.addEventListener("input", liveName);
+    liveName();
+  }
+
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const btn = form.querySelector(".save-btn");
+      btn.disabled = true;
+      const payload = {
+        class_id: classId,
+        first_name: document.getElementById("student-first").value,
+        last_name: document.getElementById("student-last").value || document.getElementById("student-first").value,
+        reading_level: document.getElementById("student-level").value,
+        classroom_grade: document.getElementById("student-grade").value,
+        notes: document.getElementById("student-notes").value,
+      };
+      const url = isNew ? "/api/students" : `/api/students/${studentId}`;
+      const response = await send(url, payload);
+      if (!response.ok) {
+        btn.disabled = false;
+        setStatus(response.error, false);
+        return;
+      }
+      if (isNew) {
+        const createdId = response.data.student && response.data.student.student_id;
+        const listName = (document.getElementById("list-name") || {}).value || "";
+        const listWords = (document.getElementById("list-words") || {}).value || "";
+        const listDescription = (document.getElementById("list-description") || {}).value || "";
+        if (String(listName).trim() || String(listWords).trim()) {
+          const listResponse = await send("/api/vocab-lists", {
+            student_id: createdId,
+            list_name: String(listName).trim() || "Vocab",
+            description: listDescription,
+            words: listWords,
+          });
+          if (!listResponse.ok) {
+            btn.disabled = false;
+            setStatus("Student saved, but the vocab was not: " + listResponse.error, false);
+            window.location.href = `/classes/${classId}/students/${createdId}`;
+            return;
+          }
+        }
+      }
+      window.location.href = `/classes/${classId}`;
+    });
+  }
+
+  document.querySelectorAll(".delete-student").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const name = button.dataset.studentName || "this student";
+      if (!window.confirm(`Remove ${name} from this class?`)) return;
+      button.disabled = true;
+      const response = await send(`/api/students/${button.dataset.studentId}`, {}, "DELETE");
+      if (!response.ok) {
+        button.disabled = false;
+        window.alert(response.error);
+        return;
+      }
+      window.location.href = `/classes/${classId}`;
+    });
+  });
+
+  const vocabToggle = document.getElementById("vocab-toggle");
+  const vocabMenu = document.getElementById("vocab-menu");
+  const addVocabBtn = document.getElementById("add-vocab-btn");
+  const addListForm = document.getElementById("add-list-form");
+  let editingListId = null;
+  function fillVocabForm(name, description, words) {
+    const nameField = document.getElementById("list-name");
+    const descriptionField = document.getElementById("list-description");
+    const wordsField = document.getElementById("list-words");
+    if (nameField) nameField.value = name || "";
+    if (descriptionField) descriptionField.value = description || "";
+    if (wordsField) wordsField.value = words || "";
+  }
+  function openVocabForm(list) {
+    if (!addListForm) return;
+    editingListId = list ? list.id : null;
+    fillVocabForm(list && list.name, list && list.description, list && list.words);
+    addListForm.hidden = false;
+    if (addVocabBtn) {
+      addVocabBtn.hidden = true;
+      addVocabBtn.setAttribute("aria-expanded", "true");
+    }
+    const nameField = document.getElementById("list-name");
+    if (nameField) nameField.focus();
+  }
+  function resetAddVocab() {
+    editingListId = null;
+    fillVocabForm("", "", "");
+    if (addListForm) addListForm.hidden = true;
+    if (addVocabBtn) {
+      addVocabBtn.hidden = false;
+      addVocabBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+  function setVocabOpen(open) {
+    if (!vocabToggle || !vocabMenu) return;
+    vocabMenu.hidden = !open;
+    vocabToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) resetAddVocab();
+  }
+  if (vocabToggle && vocabMenu) {
+    vocabToggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      setVocabOpen(vocabMenu.hidden);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setVocabOpen(false);
+    });
+  }
+
+  if (addVocabBtn && addListForm) {
+    addVocabBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      openVocabForm(null);
+    });
+  }
+
+  document.querySelectorAll(".edit-vocab").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const listId = button.dataset.listId;
+      if (String(editingListId) === String(listId) && addListForm && !addListForm.hidden) {
+        resetAddVocab();
+        return;
+      }
+      openVocabForm({
+        id: listId,
+        name: button.dataset.listName,
+        description: button.dataset.description,
+        words: button.dataset.words,
+      });
+    });
+  });
+
+  document.querySelectorAll(".delete-vocab").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const name = button.dataset.listName || "this vocab list";
+      if (!window.confirm(`Remove ${name}?`)) return;
+      button.disabled = true;
+      const response = await send(`/api/vocab-lists/${button.dataset.listId}`, {}, "DELETE");
+      if (!response.ok) {
+        button.disabled = false;
+        window.alert(response.error);
+        return;
+      }
+      window.location.href = `/classes/${classId}/students/${studentId}`;
+    });
+  });
+
+  const addListBtn = document.getElementById("add-list-btn");
+  if (addListBtn) {
+    addListBtn.addEventListener("click", async () => {
+      const status = document.getElementById("list-status");
+      addListBtn.disabled = true;
+      const payload = {
+        student_id: studentId,
+        list_name: document.getElementById("list-name").value,
+        description: document.getElementById("list-description").value,
+        words: document.getElementById("list-words").value,
+      };
+      const url = editingListId
+        ? `/api/vocab-lists/${editingListId}`
+        : "/api/vocab-lists";
+      const response = await send(url, payload, editingListId ? "PUT" : "POST");
+      addListBtn.disabled = false;
+      if (!response.ok) {
+        status.className = "status error";
+        status.textContent = response.error;
+        return;
+      }
+      window.location.href = `/classes/${classId}/students/${studentId}`;
+    });
+  }
+</script>
+</body>
+</html>

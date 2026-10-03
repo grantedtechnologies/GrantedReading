@@ -781,6 +781,42 @@ def _effective_max_iterations(
     return min(max(config.MAX_ITERATIONS, scaled), config.ITERATION_HARD_CEILING)
 
 
+def measured_without_repair(text, target_grade, *, table=None, protected_terms=None):
+    """Score `text` without running Operators A–C.
+
+    Used by single_pass_llm so Operator D still gets a real PassageDiagnostics
+    from the first deterministic pass, without the iterative substitution /
+    split loop. score_text is still the grade; this is not an unscored skip.
+    """
+    table = table if table is not None else get_default_table()
+    band = bands.target_band(target_grade)
+    protected = list(protected_terms or [])
+    initial_score = score_text(text, table=table)
+    in_band = bands.in_band(initial_score, band)
+    if initial_score.features.word_count == 0:
+        reason = REASON_EMPTY
+    elif in_band:
+        reason = None
+    elif initial_score.estimated_grade < band.low:
+        reason = REASON_BELOW_BAND
+    else:
+        reason = REASON_ABOVE_BAND
+    return CorrectionResult(
+        text=text,
+        original_text=text,
+        final_score=initial_score,
+        initial_score=initial_score,
+        target_band=band,
+        in_band=in_band,
+        iterations=0,
+        edits=[],
+        protected_terms_preserved=_preserved_terms(text, protected),
+        gate_passed=in_band,
+        failure_reason=reason,
+        score_trajectory=[],
+    )
+
+
 def correct_text(
     text: str,
     target_grade: int | str,

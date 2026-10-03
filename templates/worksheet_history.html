@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Granted Reading — Worksheet History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #3aaa35;
+    --green-dark: #2d8a29;
+    --green-light: #eaf7e9;
+    --ink: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f3f4f6;
+    --white: #ffffff;
+    --header-h: 108px;
+    --radius: 10px;
+    --font: 'Nunito', sans-serif;
+    --font-body: 'Nunito Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+
+  .topnav {
+    height: var(--header-h);
+    background: var(--white);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+  }
+  .topnav-left { display: flex; align-items: center; gap: 16px; }
+  .hamburger {
+    background: none; border: none; cursor: pointer;
+    display: flex; flex-direction: column; gap: 5px; padding: 4px;
+  }
+  .hamburger span { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; }
+  .logo-link { display: flex; align-items: center; text-decoration: none; }
+  .logo-img { height: 100px; width: auto; display: block; }
+  .app-nav-link {
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .app-nav-link:hover { color: var(--green-dark); background: var(--green-light); }
+  .app-nav-link.active { color: var(--green); background: var(--green-light); }
+  .topnav-right { display: flex; align-items: center; gap: 12px; }
+  .user-name { font-family: var(--font); font-weight: 700; font-size: 14px; text-align: right; color: inherit; text-decoration: none; display: block; }
+  .user-role { font-size: 12px; color: var(--muted); text-align: right; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--green-light); border: 2px solid var(--green);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font); font-weight: 800; font-size: 14px; color: var(--green);
+  }
+
+  .page {
+    margin: var(--header-h) auto 0;
+    padding: 28px 28px 64px;
+    max-width: 1180px;
+    width: 100%;
+  }
+  .library { display: block; }
+  .filter-bar {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(180px, 1.2fr);
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .filter-bar input,
+  .filter-bar select {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    background: var(--white);
+  }
+  .filter-bar input:focus,
+  .filter-bar select:focus { outline: none; border-color: var(--green); }
+  .filter-bar select:disabled { color: var(--muted); background: #f9fafb; }
+  .library-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+  .layout-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--white); }
+  .layout-btn {
+    width: 36px; height: 32px;
+    border: none; background: var(--white); color: var(--muted);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .layout-btn + .layout-btn { border-left: 1px solid var(--border); }
+  .layout-btn.selected { background: var(--green-light); color: var(--ink); }
+  .layout-btn svg { width: 16px; height: 16px; }
+  .sheets.layout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
+  .sheets.layout-column { display: flex; flex-direction: column; gap: 16px; }
+  .layout-column .grid-only { display: none; }
+  .layout-grid .column-only { display: none; }
+  .layout-grid .card { margin-bottom: 0; padding: 12px; text-align: center; }
+  .pdf-frame {
+    height: 280px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--white);
+    margin-bottom: 12px;
+  }
+  .pdf-frame iframe { width: 100%; height: 280px; border: 0; pointer-events: none; }
+  .grid-title { font-family: var(--font); font-size: 16px; font-weight: 800; line-height: 1.3; margin-bottom: 4px; }
+  .grid-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .grid-view { display: inline-block; }
+  .page-title { font-family: var(--font); font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+  .lead { font-size: 16px; line-height: 1.6; color: var(--muted); margin-bottom: 28px; }
+
+  .card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-bottom: 16px;
+  }
+  .sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+  .sheet-title { font-family: var(--font); font-size: 19px; font-weight: 800; }
+  .sheet-date { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .view-btn {
+    font-family: var(--font); font-weight: 700; font-size: 14px;
+    color: var(--white); background: var(--green);
+    border-radius: 8px; padding: 9px 16px; text-decoration: none; white-space: nowrap;
+  }
+  .view-btn:hover { background: var(--green-dark); }
+
+  .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 18px; margin-bottom: 16px; }
+  .fact-label { font-size: 12px; color: var(--muted); font-family: var(--font); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+  .fact-value { font-size: 14px; margin-top: 2px; word-break: break-word; }
+
+  .feedback-form { border-top: 1px solid var(--border); padding-top: 14px; display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; align-items: end; }
+  label { display: block; font-family: var(--font); font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  select, textarea {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    background: var(--white);
+  }
+  textarea { min-height: 42px; resize: vertical; }
+  select:focus, textarea:focus { outline: none; border-color: var(--green); }
+  .save-btn {
+    font-family: var(--font); font-weight: 700; font-size: 14px;
+    border: 1.5px solid var(--green); color: var(--green-dark); background: var(--white);
+    border-radius: 8px; padding: 9px 16px; cursor: pointer;
+  }
+  .save-btn:hover:not(:disabled) { background: var(--green-light); }
+  .save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .form-status { grid-column: 1 / -1; font-size: 13px; min-height: 16px; }
+  .form-status.ok { color: var(--green-dark); }
+  .form-status.err { color: #b91c1c; }
+
+  .empty { text-align: center; color: var(--muted); padding: 40px 24px; }
+  .empty a { color: var(--green-dark); font-weight: 700; }
+
+  @media (max-width: 800px) {
+    .filter-bar { grid-template-columns: 1fr; }
+    .feedback-form { grid-template-columns: 1fr; }
+    .sheet-head { flex-direction: column; }
+    .page { padding: 20px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+
+<main class="page">
+      <div class="library-head">
+        <div>
+          <h1 class="page-title" id="library-title">All worksheets</h1>
+          <p class="lead" id="library-lead">Every worksheet you have downloaded, newest first.</p>
+        </div>
+        <div class="layout-toggle" role="group" aria-label="Worksheet layout">
+          <button class="layout-btn" type="button" data-layout="column" aria-label="Column" title="Column">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 3h14M1 8h14M1 13h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+          <button class="layout-btn selected" type="button" data-layout="grid" aria-label="Grid" title="Grid">
+            <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <form class="filter-bar" id="filter-bar" role="search">
+        <div>
+          <label for="filter-class">Class</label>
+          <select id="filter-class">
+            <option value="">All classes</option>
+            {% for classroom in classes %}
+            <option value="{{ classroom.class_id }}">{{ classroom.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="filter-student">Student</label>
+          <select id="filter-student" disabled>
+            <option value="">Pick a class first</option>
+          </select>
+        </div>
+        <div>
+          <label for="filter-text">Title</label>
+          <input id="filter-text" type="search" placeholder="Find a worksheet title" />
+        </div>
+      </form>
+
+  {% if not worksheets %}
+  <div class="card empty">
+    No saved worksheets yet. Worksheets are saved when you download them from the
+    <a href="/worksheet">Worksheet Generator</a>.
+  </div>
+  {% endif %}
+
+  <p class="card empty" id="filter-empty" hidden>No worksheets match that search.</p>
+
+  <div class="sheets layout-grid" id="sheets">
+  {% for sheet in worksheets %}
+  <article class="card sheet" data-sheet-id="{{ sheet.sheetid }}" data-student-id="{{ sheet.student_id }}" data-class-id="{{ sheet.class_id }}" data-title="{{ sheet.title }}">
+    <div class="grid-only">
+      <div class="pdf-frame">
+        <iframe data-src="/worksheets/{{ sheet.sheetid }}/view#toolbar=0&navpanes=0&scrollbar=0" title="{{ sheet.title }}"></iframe>
+      </div>
+      <div class="grid-title">{{ sheet.title }}</div>
+      <div class="grid-meta">{{ sheet.class_name or "No class" }} · {{ sheet.student }}</div>
+      <a class="view-btn grid-view" href="/worksheets/{{ sheet.sheetid }}/view" target="_blank" rel="noopener">View PDF</a>
+    </div>
+
+    <div class="column-only">
+    <div class="sheet-head">
+      <div>
+        <div class="sheet-title">{{ sheet.title }}</div>
+        <div class="sheet-date" data-utc="{{ sheet.created_at }}">{{ sheet.created_at }}</div>
+      </div>
+      <a class="view-btn" href="/worksheets/{{ sheet.sheetid }}/view" target="_blank" rel="noopener">View PDF</a>
+    </div>
+
+    <div class="facts">
+      <div><div class="fact-label">Class</div><div class="fact-value">{{ sheet.class_name or "—" }}</div></div>
+      <div><div class="fact-label">Student</div><div class="fact-value">{{ sheet.student }}</div></div>
+      <div><div class="fact-label">DOK</div><div class="fact-value">{{ sheet.dok }}</div></div>
+      <div><div class="fact-label">Interest</div><div class="fact-value">{{ sheet.interest or "—" }}</div></div>
+      <div><div class="fact-label">Vocab</div><div class="fact-value">{{ sheet.vocab or "—" }}</div></div>
+      <div><div class="fact-label">Phonics</div><div class="fact-value">{{ sheet.phonics or "—" }}</div></div>
+    </div>
+
+    <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}">
+      <div>
+        <label for="rating-{{ sheet.sheetid }}">Rating</label>
+        <select id="rating-{{ sheet.sheetid }}" name="rating">
+          <option value="">No rating</option>
+          {% for value in range(rating_min, rating_max + 1) %}
+          <option value="{{ value }}" {% if sheet.rating == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="feedback-{{ sheet.sheetid }}">Feedback</label>
+        <textarea id="feedback-{{ sheet.sheetid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?">{{ sheet.feedback }}</textarea>
+      </div>
+      <button class="save-btn" type="submit">Save</button>
+      <p class="form-status" role="status"></p>
+    </form>
+    </div>
+  </article>
+  {% endfor %}
+  </div>
+</main>
+
+<script>
+  document.querySelectorAll("[data-utc]").forEach((el) => {
+    const when = new Date(el.dataset.utc);
+    if (!Number.isNaN(when.getTime())) {
+      el.textContent = when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    }
+  });
+
+  const sheets = document.getElementById("sheets");
+  const title = document.getElementById("library-title");
+  const lead = document.getElementById("library-lead");
+  const filterEmpty = document.getElementById("filter-empty");
+  const filterClass = document.getElementById("filter-class");
+  const filterStudent = document.getElementById("filter-student");
+  const filterText = document.getElementById("filter-text");
+  const filterStudents = {{ students|tojson }};
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function studentLabel(student) {
+    const first = (student.first_name || "").trim();
+    const last = (student.last_name || "").trim();
+    if (!last || last === first) return first;
+    return `${first} ${last}`;
+  }
+
+  function fillStudents() {
+    const classId = filterClass.value;
+    filterStudent.disabled = !classId;
+    const options = [`<option value="">${classId ? "All students" : "Pick a class first"}</option>`];
+    if (classId) {
+      filterStudents
+        .filter((student) => String(student.class_id) === classId)
+        .forEach((student) => {
+          options.push(`<option value="${student.student_id}">${escapeHtml(studentLabel(student))}</option>`);
+        });
+    }
+    filterStudent.innerHTML = options.join("");
+  }
+
+  function applyFilter() {
+    const classId = filterClass.value;
+    const studentId = filterStudent.value;
+    const query = filterText.value.trim().toLowerCase();
+    const className = filterClass.selectedOptions[0] ? filterClass.selectedOptions[0].textContent : "";
+    const studentName = filterStudent.selectedOptions[0] ? filterStudent.selectedOptions[0].textContent : "";
+    let visible = 0;
+    document.querySelectorAll(".sheet").forEach((sheet) => {
+      const classMatch = !classId || sheet.dataset.classId === classId;
+      const studentMatch = !studentId || sheet.dataset.studentId === studentId;
+      const textMatch = !query || (sheet.dataset.title || "").toLowerCase().includes(query);
+      const show = classMatch && studentMatch && textMatch;
+      sheet.hidden = !show;
+      if (show) visible += 1;
+    });
+    const narrowed = classId || studentId || query;
+    if (studentId) title.textContent = studentName;
+    else if (classId) title.textContent = className;
+    else title.textContent = "All worksheets";
+    lead.textContent = narrowed
+      ? "Showing worksheets that match this search."
+      : "Every worksheet you have downloaded, newest first.";
+    if (filterEmpty) filterEmpty.hidden = !narrowed || visible > 0 || !document.querySelector(".sheet");
+    if (sheets && sheets.classList.contains("layout-grid")) loadPreviews();
+  }
+
+  filterClass.addEventListener("change", () => {
+    fillStudents();
+    applyFilter();
+  });
+  filterStudent.addEventListener("change", applyFilter);
+  filterText.addEventListener("input", applyFilter);
+  document.getElementById("filter-bar").addEventListener("submit", (event) => event.preventDefault());
+  fillStudents();
+
+  function loadPreviews() {
+    document.querySelectorAll(".sheet:not([hidden]) iframe[data-src]").forEach((frame) => {
+      if (!frame.getAttribute("src")) frame.src = frame.dataset.src;
+    });
+  }
+
+  function applyLayout(layout) {
+    const next = layout === "grid" ? "grid" : "column";
+    if (sheets) {
+      sheets.classList.toggle("layout-grid", next === "grid");
+      sheets.classList.toggle("layout-column", next === "column");
+    }
+    document.querySelectorAll(".layout-btn").forEach((button) => {
+      button.classList.toggle("selected", button.dataset.layout === next);
+    });
+    localStorage.setItem("worksheet-history-layout", next);
+    if (next === "grid") loadPreviews();
+  }
+
+  document.querySelectorAll(".layout-btn").forEach((button) => {
+    button.addEventListener("click", () => applyLayout(button.dataset.layout));
+  });
+  if (sheets) applyLayout(localStorage.getItem("worksheet-history-layout") || "grid");
+
+  document.querySelectorAll(".feedback-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector(".save-btn");
+      const status = form.querySelector(".form-status");
+      status.className = "form-status";
+      status.textContent = "";
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/worksheets/${form.dataset.sheetId}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rating: form.elements.rating.value || null,
+            feedback: form.elements.feedback.value,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not save feedback.");
+        status.classList.add("ok");
+        status.textContent = "Saved.";
+      } catch (err) {
+        status.classList.add("err");
+        status.textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+</script>
+</body>
+</html>

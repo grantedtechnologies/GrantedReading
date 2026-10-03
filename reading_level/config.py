@@ -8,6 +8,7 @@ Values marked UNCALIBRATED are placeholders chosen for plausible ordering,
 not fitted against labeled data. See docs/calibration.md.
 """
 
+import os
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -264,6 +265,33 @@ ENABLE_CLAUSE_SIMPLIFICATION = False
 MAX_GENERATION_ATTEMPTS = 2
 
 # --------------------------------------------------------------------------
+# Correction mode
+#
+# The iterative loop (Operators A–C in repair.py) is the Railway CPU cost:
+# up to MAX_ITERATIONS / ITERATION_HARD_CEILING passes, each one re-running
+# spaCy, WordNet + Lesk, and score_text. The LLM rewrite (Operator D) is
+# network-bound on Azure, not local CPU. There is also no Lexile-calibrated
+# training data yet to justify that extra iterative precision on first
+# deploy. This flag lets a deployment skip A–C and go diagnostics → one
+# Operator D call, without deleting the iterative path.
+#
+# Values (set CORRECTION_MODE in the environment):
+#   iterative       — today's default: A–C loop, then Operator D if it
+#                     plateaus. Fully working; leave this on when you want
+#                     the original precision back.
+#   single_pass_llm — skip A–C. Score and diagnose once, then one Operator D
+#                     rewrite. score_text still reports the grade; the LLM
+#                     never does. check_semantic_drift still runs.
+# --------------------------------------------------------------------------
+CORRECTION_MODE_ITERATIVE = "iterative"
+CORRECTION_MODE_SINGLE_PASS_LLM = "single_pass_llm"
+CORRECTION_MODES = (
+    CORRECTION_MODE_ITERATIVE,
+    CORRECTION_MODE_SINGLE_PASS_LLM,
+)
+DEFAULT_CORRECTION_MODE = CORRECTION_MODE_ITERATIVE
+
+# --------------------------------------------------------------------------
 # Operator D: diagnostics and rewrite verification
 #
 # The rewrite itself is an LLM call and lives in ai.py. This package only
@@ -420,3 +448,11 @@ DOK_MIX_BY_GRADE = {
     11: {1: 10, 2: 30, 3: 40, 4: 20},
     12: {1: 10, 2: 25, 3: 40, 4: 25},
 }
+
+
+def correction_mode() -> str:
+    """Which correction path a request takes. Unknown values fall back to iterative."""
+    raw = (os.getenv("CORRECTION_MODE") or DEFAULT_CORRECTION_MODE).strip().lower()
+    if raw in CORRECTION_MODES:
+        return raw
+    return DEFAULT_CORRECTION_MODE
