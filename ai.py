@@ -11,10 +11,14 @@ import threading
 import file
 import requests
 from azure.ai.projects import AIProjectClient
+<<<<<<< HEAD
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
 from azure.identity import ClientSecretCredential
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
+=======
+from azure.identity import ClientSecretCredential
+>>>>>>> 3c9861465aead7fafb6053af300b74b534014542
 from dotenv import load_dotenv
 
 import ai_rewrite
@@ -118,6 +122,13 @@ def ensure_ai_configured():
         missing.append("FLUX_API_URL")
     if not FLUX_MODEL:
         missing.append("FLUX_MODEL")
+    # Azure Service Principal authentication
+    if not os.getenv("AZURE_CLIENT_ID"):
+        missing.append("AZURE_CLIENT_ID")
+    if not os.getenv("AZURE_CLIENT_SECRET"):
+        missing.append("AZURE_CLIENT_SECRET")
+    if not os.getenv("AZURE_TENANT_ID"):
+        missing.append("AZURE_TENANT_ID")
     if missing:
         logger.error("AI is not configured; missing %s", ", ".join(missing))
         raise RuntimeError(
@@ -787,7 +798,13 @@ _openai_client = None
 
 
 def _get_openai_client():
+<<<<<<< HEAD
     """Reuse one project client, authenticated as the Foundry service principal."""
+=======
+    """Reuse one project client. Use explicit ClientSecretCredential for
+    Railway and other non-Azure deployments.
+    """
+>>>>>>> 3c9861465aead7fafb6053af300b74b534014542
     global _project_client, _openai_client
     if _openai_client is not None:
         return _project_client, _openai_client
@@ -796,8 +813,17 @@ def _get_openai_client():
         if _openai_client is not None:
             return _project_client, _openai_client
 
+<<<<<<< HEAD
         endpoint = _llm_endpoint()
         logger.info("Azure project endpoint: %s", endpoint)
+=======
+        # Use explicit ClientSecretCredential with environment variables
+        credential = ClientSecretCredential(
+            tenant_id=os.getenv("AZURE_TENANT_ID"),
+            client_id=os.getenv("AZURE_CLIENT_ID"),
+            client_secret=os.getenv("AZURE_CLIENT_SECRET"),
+        )
+>>>>>>> 3c9861465aead7fafb6053af300b74b534014542
         _project_client = AIProjectClient(
     endpoint=endpoint,
     credential=foundry_credential(),
