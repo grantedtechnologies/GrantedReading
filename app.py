@@ -846,8 +846,9 @@ def _class_fields(body):
         raise ValueError("Enter a class name and subject.")
     if len(name) > 255 or len(subject) > 255:
         raise ValueError("Keep the class name and subject under 255 characters.")
-    if not re.fullmatch(r"\d{4}", school_year):
-        raise ValueError("Enter the school year as four digits, like 2026.")
+    match = re.fullmatch(r"(\d{4})-(\d{4})", school_year)
+    if match is None or int(match.group(2)) != int(match.group(1)) + 1:
+        raise ValueError("Choose a school year like 2026-2027.")
     grade_level = _parse_grade(body.get("grade_level"), "grade level")
     return name, subject, grade_level, school_year
 

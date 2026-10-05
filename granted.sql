@@ -89,7 +89,7 @@ CREATE TABLE `class`(
     `subject` VARCHAR(255) NOT NULL,
     `name` VARCHAR(255) NOT NULL,
     `gradeLevel` SMALLINT NOT NULL,
-    `schoolYear` VARCHAR(4) NOT NULL
+    `schoolYear` VARCHAR(9) NOT NULL
 );
 ALTER TABLE
     `worksheets` ADD CONSTRAINT `worksheets_teacherid_foreign` FOREIGN KEY(`teacherid`) REFERENCES `Teachers`(`teacherid`);
@@ -115,10 +115,10 @@ INSERT INTO `Teachers` (fname, lname, email, password, verified) VALUES
   ('Luis', 'Rivera', 'luis.rivera@granted.local', 'password123', 1);
 
 INSERT INTO `class` (teacherid, subject, name, gradeLevel, schoolYear) VALUES
-  (1, 'English', '1st Period ELA', 4, '2026'),
-  (1, 'Science', '2nd Period Science', 4, '2026'),
-  (2, 'History', '3rd Period History', 6, '2026'),
-  (2, 'Reading', 'Reading Lab', 6, '2026');
+  (1, 'English', '1st Period ELA', 4, '2026-2027'),
+  (1, 'Science', '2nd Period Science', 4, '2026-2027'),
+  (2, 'History', '3rd Period History', 6, '2026-2027'),
+  (2, 'Reading', 'Reading Lab', 6, '2026-2027');
 
 INSERT INTO `Students` (classid, fname, lname, `grade-level`, `roading-level`, notes) VALUES
   (1, 'Jordan', 'Hale', 4, 2, 'Works hard with short decodable stories. Loves dinosaurs.'),

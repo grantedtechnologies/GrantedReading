@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{ profile|capitalize }} — Granted Reading tests</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --green-dark: #2d8a29;
+    --green-light: #eaf7e9;
+    --ink: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f3f4f6;
+    --white: #ffffff;
+    --font: 'Nunito', sans-serif;
+    --font-body: 'Nunito Sans', sans-serif;
+  }
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  header {
+    background: var(--white);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px 0;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .brand h1 { font-family: var(--font); font-size: 20px; font-weight: 800; }
+  .brand h1 span { color: var(--green-dark); }
+  .reset {
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  nav { display: flex; gap: 4px; }
+  nav a {
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    text-decoration: none;
+    color: var(--muted);
+    padding: 8px 14px;
+    border-radius: 10px 10px 0 0;
+  }
+  nav a.active { background: var(--bg); color: var(--ink); }
+  main { padding: 28px 32px 40px; }
+  .intro, .status {
+    width: min(1280px, 100%);
+    margin-bottom: 16px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .intro { color: var(--ink); max-width: 760px; }
+  .status { color: var(--muted); }
+  .layout {
+    width: min(1280px, 100%);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 210px;
+    gap: 16px;
+    align-items: start;
+  }
+  .board {
+    display: grid;
+    grid-template-columns: 220px repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .label, .cell {
+    border-radius: 12px;
+    min-height: 132px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-family: var(--font);
+    font-weight: 800;
+  }
+  .label {
+    position: relative;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px 16px 42px;
+    text-align: left;
+    background: var(--white);
+    border: 1px solid var(--border);
+    font-size: 18px;
+  }
+  .label .about {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.35;
+  }
+  .full-test {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 12px;
+    border-radius: 8px;
+    padding: 6px 8px;
+    cursor: pointer;
+  }
+  .full-test:hover { background: var(--green-light); color: var(--green-dark); }
+  .cell {
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 14px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    font-size: 16px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .cell .meta,
+  .cell .result {
+    font-family: var(--font-body);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .cell .meta { font-size: 14px; color: var(--ink); }
+  .cell .result { font-size: 13px; }
+  .cell.running { background: #fff7ed; border-color: #fdba74; color: #b45309; }
+  .cell.passed { background: var(--green-light); border-color: #b7e2b4; color: var(--green-dark); }
+  .cell.failed { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+  .stats {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 12px 6px;
+    min-height: 132px;
+  }
+  .stats h2 {
+    font-family: var(--font);
+    font-size: 15px;
+    font-weight: 800;
+    margin-bottom: 6px;
+  }
+  .stats-note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+    margin-bottom: 8px;
+  }
+  .run-card { margin-top: 10px; }
+  .run-card h3 {
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 800;
+    margin-bottom: 2px;
+  }
+  .run-card .detail {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .stat span { color: var(--muted); font-weight: 600; }
+  .stat strong { font-family: var(--font); font-weight: 800; }
+  .custom-card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 22px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 460px;
+  }
+  .custom-card.running { background: #fff7ed; border-color: #fdba74; }
+  .custom-card.passed { background: var(--green-light); border-color: #b7e2b4; }
+  .custom-card.failed { background: #fef2f2; border-color: #fecaca; }
+  .custom-card label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+  }
+  .custom-card select,
+  .custom-card input {
+    font-family: var(--font-body);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .custom-card .about {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.4;
+    margin-top: -6px;
+  }
+  .custom-card .result {
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+  }
+  .custom-card.running .result { color: #b45309; }
+  .custom-card.passed .result { color: var(--green-dark); }
+  .custom-card.failed .result { color: #b91c1c; }
+  .start {
+    align-self: flex-start;
+    border: none;
+    background: var(--green-dark);
+    color: var(--white);
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    border-radius: 8px;
+    padding: 10px 16px;
+    cursor: pointer;
+  }
+  .start:hover { filter: brightness(1.05); }
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    .board { grid-template-columns: 1fr; }
+    main { padding: 20px 16px 32px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>Granted <span>Reading</span> tests</h1>
+    <button class="reset" type="button" id="reset">Clear marks</button>
+  </div>
+  <nav>
+    <a href="/load" {% if profile == 'load' %}class="active"{% endif %}>Load</a>
+    <a href="/stress" {% if profile == 'stress' %}class="active"{% endif %}>Stress</a>
+    <a href="/spike" {% if profile == 'spike' %}class="active"{% endif %}>Spike</a>
+    <a href="/custom" {% if profile == 'custom' %}class="active"{% endif %}>Custom</a>
+  </nav>
+</header>
+<main>
+  <p class="intro">{{ intro }}</p>
+  <p class="status" id="status">{% if profile == 'custom' %}Pick a test, then choose how long it runs and how many users.{% else %}Click a square to start that test.{% endif %}</p>
+  <div class="layout">
+  {% if profile == 'custom' %}
+  <form class="custom-card" id="custom-card">
+    <label>Test
+      <select id="custom-kind">
+        {% for kind in kinds %}
+        <option value="{{ kind.id }}">{{ kind.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="about" id="custom-about"></p>
+    <label>Duration (minutes)
+      <input id="custom-minutes" type="number" min="1" max="120" value="3" required />
+    </label>
+    <label>Users
+      <input id="custom-users" type="number" min="1" max="500" value="3" required />
+    </label>
+    <button class="start" type="submit">Start test</button>
+    <p class="result" hidden></p>
+  </form>
+  {% else %}
+  <section class="board">
+    {% for row in rows %}
+    <div class="label">
+      <span>{{ row.label }}</span>
+      <span class="about">{{ row.about }}</span>
+      <button type="button" class="full-test" data-kind="{{ row.kind }}">Full test</button>
+    </div>
+    {% for cell in row.cells %}
+    <button class="cell" type="button" data-id="{{ cell.id }}" data-label="{{ row.label }}, {{ cell.name }}" data-seconds="{{ cell.seconds }}">
+      <span class="level">{{ cell.name }}</span>
+      <span class="meta">{{ cell.meta }}</span>
+      <span class="result" hidden></span>
+    </button>
+    {% endfor %}
+    {% endfor %}
+  </section>
+  {% endif %}
+  <aside class="stats" id="stats">
+    <h2>Results</h2>
+    <p class="stats-note" id="stats-note">{% if profile == 'custom' %}Timing shows up here when the test finishes.{% else %}Click a square. Timing shows up here when it finishes.{% endif %}</p>
+    <div id="stats-body" hidden></div>
+  </aside>
+  </div>
+</main>
+<script>
+  const statusLine = document.getElementById("status");
+  const statsNote = document.getElementById("stats-note");
+  const statsBody = document.getElementById("stats-body");
+  let countdown = null;
+
+  function formatMs(value) {
+    if (value == null) return "—";
+    if (value >= 1000) return (value / 1000).toFixed(2) + " s";
+    return (value < 10 ? value.toFixed(1) : Math.round(value)) + " ms";
+  }
+
+  function formatCount(value) {
+    return Number(value || 0).toLocaleString();
+  }
+
+  let busy = false;
+
+  function statBlock(stats) {
+    const checks = stats.checks_total
+      ? Math.round(stats.checks_passed / stats.checks_total * 1000) / 10 + "%"
+      : "—";
+    const rows = [
+      ["Checks", checks],
+      ["Passed", formatCount(stats.checks_passed) + " / " + formatCount(stats.checks_total)],
+      ["Iterations", formatCount(stats.iterations)],
+      ["Requests", formatCount(stats.requests)],
+      ["Failed requests", formatCount(stats.failed_requests)],
+      ["Average", formatMs(stats.avg_ms)],
+      ["Median", formatMs(stats.median_ms)],
+      ["p95", formatMs(stats.p95_ms)],
+      ["Min", formatMs(stats.min_ms)],
+      ["Max", formatMs(stats.max_ms)],
+    ];
+    return rows.map(function (row) {
+      return "<div class=\"stat\"><span>" + row[0] + "</span><strong>" + row[1] + "</strong></div>";
+    }).join("");
+  }
+
+  function showRuns(runs, note) {
+    document.querySelector(".stats h2").textContent = "Results";
+    statsNote.textContent = note || "";
+    statsNote.hidden = !note;
+    if (!runs.length) {
+      statsBody.hidden = true;
+      statsBody.innerHTML = "";
+      return;
+    }
+    statsBody.hidden = false;
+    statsBody.innerHTML = runs.map(function (run) {
+      return "<section class=\"run-card\"><h3>" + run.title + "</h3>"
+        + "<p class=\"detail\">" + (run.detail || "") + "</p>"
+        + (run.stats ? statBlock(run.stats) : "")
+        + "</section>";
+    }).join("");
+  }
+
+  function stopCountdown() {
+    if (countdown) clearInterval(countdown);
+    countdown = null;
+  }
+
+  function clock(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const ss = String(secs).padStart(2, "0");
+    if (hours) return hours + ":" + String(minutes).padStart(2, "0") + ":" + ss;
+    return minutes + ":" + ss;
+  }
+
+  function startCountdown(cell) {
+    stopCountdown();
+    const ends = Date.now() + Number(cell.dataset.seconds) * 1000;
+    const result = cell.querySelector(".result");
+    const endAt = new Date(ends).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    function tick() {
+      const left = ends - Date.now();
+      if (left <= 0) {
+        result.textContent = "Finishing up";
+        statusLine.textContent = cell.dataset.label + " · finishing up.";
+        return;
+      }
+      const label = clock(left) + " left · ends " + endAt;
+      result.textContent = label;
+      statusLine.textContent = cell.dataset.label + " · " + label;
+    }
+    tick();
+    countdown = setInterval(tick, 1000);
+  }
+
+  function runCell(cell) {
+    const result = cell.querySelector(".result");
+    cell.classList.remove("passed", "failed");
+    cell.classList.add("running");
+    result.hidden = false;
+    startCountdown(cell);
+    return fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: cell.dataset.id }),
+    }).then(function (response) {
+      return response.json().then(function (data) {
+        stopCountdown();
+        cell.classList.remove("running");
+        if (!response.ok) {
+          result.hidden = true;
+          statusLine.textContent = data.message || "That test did not start.";
+          return null;
+        }
+        cell.classList.add(data.ok ? "passed" : "failed");
+        result.textContent = data.detail;
+        statusLine.textContent = cell.dataset.label + " · " + data.detail;
+        return data;
+      });
+    }).catch(function () {
+      stopCountdown();
+      cell.classList.remove("running");
+      result.hidden = true;
+      statusLine.textContent = "Could not reach the test app.";
+      return null;
+    });
+  }
+
+  document.querySelectorAll(".cell").forEach(function (cell) {
+    cell.addEventListener("click", function () {
+      if (busy || cell.classList.contains("running")) {
+        statusLine.textContent = "A test is already running.";
+        return;
+      }
+      busy = true;
+      showRuns([], "Collecting timings…");
+      runCell(cell).then(function (data) {
+        if (!data) {
+          showRuns([], statusLine.textContent);
+          return;
+        }
+        showRuns([{
+          title: cell.dataset.label,
+          detail: data.detail,
+          stats: data.stats,
+        }]);
+      }).finally(function () {
+        busy = false;
+      });
+    });
+  });
+
+  document.querySelectorAll(".full-test").forEach(function (button) {
+    button.addEventListener("click", function () {
+      if (busy) {
+        statusLine.textContent = "A test is already running.";
+        return;
+      }
+      const kind = button.dataset.kind;
+      const cells = Array.from(document.querySelectorAll(".cell")).filter(function (cell) {
+        return cell.dataset.id.endsWith("-" + kind);
+      });
+      cells.forEach(function (cell) {
+        cell.classList.remove("passed", "failed", "running");
+        const result = cell.querySelector(".result");
+        result.hidden = true;
+        result.textContent = "";
+      });
+      busy = true;
+      const done = [];
+      let index = 0;
+      function next() {
+        if (index >= cells.length) {
+          statusLine.textContent = button.parentElement.querySelector("span").textContent + " full test finished.";
+          busy = false;
+          return;
+        }
+        const cell = cells[index];
+        index += 1;
+        showRuns(done, "Running " + cell.dataset.label + "…");
+        runCell(cell).then(function (data) {
+          if (!data) {
+            showRuns(done, statusLine.textContent);
+            busy = false;
+            return;
+          }
+          done.push({
+            title: cell.dataset.label,
+            detail: data.detail,
+            stats: data.stats,
+          });
+          showRuns(done, data.ok ? "" : "Stopped. " + cell.dataset.label + " failed.");
+          if (!data.ok) {
+            statusLine.textContent = cell.dataset.label + " failed. Stopped before the next level.";
+            busy = false;
+            return;
+          }
+          next();
+        });
+      }
+      next();
+    });
+  });
+
+  const customCard = document.getElementById("custom-card");
+  if (customCard) {
+    const kinds = {{ kinds|tojson }};
+    const kindSelect = document.getElementById("custom-kind");
+    const about = document.getElementById("custom-about");
+    function paintAbout() {
+      const match = kinds.find(function (kind) { return kind.id === kindSelect.value; });
+      about.textContent = match ? match.about : "";
+    }
+    kindSelect.addEventListener("change", paintAbout);
+    paintAbout();
+    customCard.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (busy) {
+        statusLine.textContent = "A test is already running.";
+        return;
+      }
+      const minutes = Number(document.getElementById("custom-minutes").value);
+      const users = Number(document.getElementById("custom-users").value);
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+        statusLine.textContent = "Duration must be 1 to 120 minutes.";
+        return;
+      }
+      if (!Number.isInteger(users) || users < 1 || users > 500) {
+        statusLine.textContent = "Users must be 1 to 500.";
+        return;
+      }
+      const name = kindSelect.options[kindSelect.selectedIndex].text;
+      customCard.dataset.seconds = String(minutes * 60 + 15);
+      customCard.dataset.label = name + ", " + users + " users, " + minutes + " min";
+      customCard.classList.remove("passed", "failed");
+      busy = true;
+      showRuns([], "Collecting timings…");
+      const result = customCard.querySelector(".result");
+      customCard.classList.add("running");
+      result.hidden = false;
+      startCountdown(customCard);
+      fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: kindSelect.value,
+          minutes: minutes,
+          users: users,
+        }),
+      }).then(function (response) {
+        return response.json().then(function (data) {
+          stopCountdown();
+          customCard.classList.remove("running");
+          if (!response.ok) {
+            result.hidden = true;
+            statusLine.textContent = data.message || "That test did not start.";
+            showRuns([], statusLine.textContent);
+            return;
+          }
+          customCard.classList.add(data.ok ? "passed" : "failed");
+          result.textContent = data.detail;
+          statusLine.textContent = customCard.dataset.label + " · " + data.detail;
+          showRuns([{
+            title: customCard.dataset.label,
+            detail: data.detail,
+            stats: data.stats,
+          }]);
+        });
+      }).catch(function () {
+        stopCountdown();
+        customCard.classList.remove("running");
+        result.hidden = true;
+        statusLine.textContent = "Could not reach the test app.";
+        showRuns([], statusLine.textContent);
+      }).finally(function () {
+        busy = false;
+      });
+    });
+  }
+
+  document.getElementById("reset").addEventListener("click", function () {
+    document.querySelectorAll(".cell").forEach(function (cell) {
+      if (cell.classList.contains("running")) return;
+      cell.classList.remove("passed", "failed");
+      const result = cell.querySelector(".result");
+      result.hidden = true;
+      result.textContent = "";
+    });
+    statusLine.textContent = customCard
+      ? "Pick a test, then choose how long it runs and how many users."
+      : "Click a square to start that test.";
+    if (customCard) {
+      customCard.classList.remove("running", "passed", "failed");
+      const customResult = customCard.querySelector(".result");
+      customResult.hidden = true;
+      customResult.textContent = "";
+    }
+    showRuns([], customCard
+      ? "Pick a test, then choose how long it runs and how many users."
+      : "Click a square. Timing shows up here when it finishes.");
+  });
+</script>
+</body>
+</html>

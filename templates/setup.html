@@ -86,7 +86,7 @@
         </div>
         <div class="field">
           <label for="class-year">School year</label>
-          <input id="class-year" inputmode="numeric" maxlength="4" value="2026" />
+          <select id="class-year"></select>
         </div>
       </div>
       <button class="submit" type="submit">Add class</button>
@@ -183,7 +183,23 @@
     renderClasses();
   }
 
+  function fillYearSelect(select) {
+    const now = new Date();
+    const start = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+    const years = [];
+    for (let offset = -2; offset <= 2; offset += 1) {
+      const from = start + offset;
+      years.push(from + "-" + (from + 1));
+    }
+    const current = start + "-" + (start + 1);
+    select.innerHTML = years.map((year) => {
+      const on = year === current ? " selected" : "";
+      return `<option value="${year}"${on}>${year}</option>`;
+    }).join("");
+  }
+
   fillGradeSelect(document.getElementById("class-grade"), 4);
+  fillYearSelect(document.getElementById("class-year"));
 
   document.getElementById("class-form").addEventListener("submit", async (event) => {
     event.preventDefault();
