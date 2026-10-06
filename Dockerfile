@@ -20,4 +20,5 @@ EXPOSE 5000
 
 # One worker: the Foundry client and spaCy pipeline are process-local.
 # Generation can take longer than gunicorn's default 30s.
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --timeout 180 app:app"]
+# -u flag unbuffers Python output so logs appear immediately
+CMD ["sh", "-c", "python -u scripts/load_granted_sql.py && gunicorn --bind 0.0.0.0:${PORT} --workers 1 --timeout 180 app:app"]
