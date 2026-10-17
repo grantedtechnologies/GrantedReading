@@ -142,7 +142,24 @@
   .submit:hover { background: var(--green-dark); }
   .submit:disabled { opacity: 0.7; cursor: wait; }
 
-  .plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .text-link {
+    display: block;
+    width: 100%;
+    margin-top: 14px;
+    background: none;
+    border: none;
+    color: var(--green-dark);
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+  }
+  .forgot-row { text-align: right; margin: -8px 0 14px; }
+  .forgot-row .text-link { display: inline; width: auto; margin: 0; }
+
+  .plan-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   .plan-card {
     border: 1.5px solid var(--border);
     border-radius: 10px;
@@ -188,6 +205,9 @@
         <input id="password" name="password" type="password" autocomplete="current-password" required />
         <p class="note hidden" id="password-hint">Use at least one letter, one number, and one symbol.</p>
       </div>
+      <p class="forgot-row hidden" id="forgot-row">
+        <button type="button" class="text-link" id="forgot-open">Forgot password?</button>
+      </p>
       <div class="field hidden" id="confirm-field">
         <label for="confirm-password">Re-enter password</label>
         <input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" />
@@ -207,8 +227,19 @@
             <div class="plan-price">$5.99</div>
             <div class="plan-note">Unlimited worksheets</div>
           </label>
+          <label class="plan-card" id="plan-pilot">
+            <input type="radio" name="membership" value="pilot" />
+            <div class="plan-name">Pilot</div>
+            <div class="plan-price">School code</div>
+            <div class="plan-note">Unlimited while it is live</div>
+          </label>
         </div>
-        <p class="note">Pro goes to payment first. The confirmation email comes after that.</p>
+        <p class="note" id="plan-note">Pro goes to payment first. The confirmation email comes after that.</p>
+      </div>
+      <div class="field hidden" id="pilot-field">
+        <label for="pilot-code">Pilot code</label>
+        <input id="pilot-code" name="pilot_code" type="text" autocomplete="off" />
+        <p class="note">Enter the code from your school. A live pilot skips payment and confirms by email.</p>
       </div>
       <div class="error" id="error"></div>
       <button class="submit{% if not resume_checkout %} hidden{% endif %}" id="resume-checkout" type="button">Continue to payment</button>
@@ -220,6 +251,36 @@
       <div class="error" id="resend-error"></div>
       <button class="submit" id="resend-btn" type="button">Resend email</button>
     </div>
+
+    <form id="forgot-form" class="hidden">
+      <p class="note">Enter the email on your account. If it matches, we will send a link to choose a new password.</p>
+      <div class="field">
+        <label for="forgot-email">Email</label>
+        <input id="forgot-email" type="email" autocomplete="email" />
+      </div>
+      <div class="error" id="forgot-error"></div>
+      <button class="submit" id="forgot-submit" type="submit">Send reset link</button>
+      <button type="button" class="text-link" id="forgot-back">Back to sign in</button>
+    </form>
+
+    <div id="reset-sent" class="hidden">
+      <p class="note" id="reset-sent-note">If an account uses that email, we sent a reset link. It expires in 1 hour.</p>
+      <button type="button" class="text-link" id="reset-sent-back">Back to sign in</button>
+    </div>
+
+    <form id="reset-form" class="hidden">
+      <p class="note">Choose a new password. Use a letter, a number, and a symbol. This link expires in 1 hour.</p>
+      <div class="field">
+        <label for="reset-password">New password</label>
+        <input id="reset-password" type="password" autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <label for="reset-confirm">Re-enter password</label>
+        <input id="reset-confirm" type="password" autocomplete="new-password" />
+      </div>
+      <div class="error" id="reset-error"></div>
+      <button class="submit" id="reset-submit" type="submit">Save password</button>
+    </form>
   </div>
 
 <script>
@@ -229,19 +290,39 @@
   function setMode(next) {
     mode = next;
     const signingUp = mode === "signup";
+    const forgot = mode === "forgot";
+    const resetting = mode === "reset";
     document.getElementById("check-email").classList.add("hidden");
-    document.getElementById("auth-form").classList.remove("hidden");
-    document.getElementById("mode-nav").classList.remove("hidden");
+    document.getElementById("reset-sent").classList.add("hidden");
+    document.getElementById("auth-form").classList.toggle("hidden", forgot || resetting);
+    document.getElementById("forgot-form").classList.toggle("hidden", !forgot);
+    document.getElementById("reset-form").classList.toggle("hidden", !resetting);
+    document.getElementById("mode-nav").classList.toggle("hidden", forgot || resetting);
     document.getElementById("tab-signin").classList.toggle("active", !signingUp);
     document.getElementById("tab-signup").classList.toggle("active", signingUp);
     document.getElementById("name-fields").classList.toggle("hidden", !signingUp);
     document.getElementById("plan-fields").classList.toggle("hidden", !signingUp);
+    document.getElementById("forgot-row").classList.toggle("hidden", signingUp || forgot || resetting);
+    syncPlan();
     document.getElementById("confirm-field").classList.toggle("hidden", !signingUp);
     document.getElementById("password-hint").classList.toggle("hidden", !signingUp);
     document.getElementById("password").autocomplete = signingUp ? "new-password" : "current-password";
-    document.getElementById("heading").textContent = signingUp ? "Create an account" : "Sign in";
+    const heading = document.getElementById("heading");
+    if (resetting) heading.textContent = "Choose a new password";
+    else if (forgot) heading.textContent = "Reset your password";
+    else heading.textContent = signingUp ? "Create an account" : "Sign in";
     document.getElementById("submit").textContent = signingUp ? "Sign up" : "Sign in";
     document.getElementById("error").textContent = "";
+  }
+
+  function showResetSent() {
+    document.getElementById("forgot-form").classList.add("hidden");
+    document.getElementById("auth-form").classList.add("hidden");
+    document.getElementById("mode-nav").classList.add("hidden");
+    document.getElementById("reset-sent").classList.remove("hidden");
+    document.getElementById("heading").textContent = "Check your email";
+    document.getElementById("reset-sent-note").textContent =
+      "If an account uses that email, we sent a reset link. It expires in 1 hour.";
   }
 
   function showCheckEmail(email) {
@@ -254,17 +335,30 @@
       `We sent a confirmation link to ${email}. It expires in 24 hours.`;
   }
 
+  function selectedPlan() {
+    const chosen = document.querySelector('input[name="membership"]:checked');
+    return chosen ? chosen.value : "standard";
+  }
+
+  function syncPlan() {
+    const plan = selectedPlan();
+    const signingUp = mode === "signup";
+    document.getElementById("plan-standard").classList.toggle("selected", plan === "standard");
+    document.getElementById("plan-pro").classList.toggle("selected", plan === "pro");
+    document.getElementById("plan-pilot").classList.toggle("selected", plan === "pilot");
+    document.getElementById("pilot-field").classList.toggle("hidden", !signingUp || plan !== "pilot");
+    const note = document.getElementById("plan-note");
+    if (plan === "pilot") {
+      note.textContent = "A live pilot code skips payment. You confirm your email, then get unlimited worksheets until the pilot ends.";
+    } else if (plan === "pro") {
+      note.textContent = "Pro goes to payment first. The confirmation email comes after that.";
+    } else {
+      note.textContent = "Standard includes one worksheet a day.";
+    }
+  }
+
   document.querySelectorAll('input[name="membership"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      document.getElementById("plan-standard").classList.toggle(
-        "selected",
-        document.querySelector('input[name="membership"][value="standard"]').checked
-      );
-      document.getElementById("plan-pro").classList.toggle(
-        "selected",
-        document.querySelector('input[name="membership"][value="pro"]').checked
-      );
-    });
+    input.addEventListener("change", syncPlan);
   });
 
   document.getElementById("tab-signin").addEventListener("click", () => setMode("signin"));
@@ -278,12 +372,100 @@
     "We could not send the confirmation email. Click Resend to try again. Your account is not verified yet.";
   {% endif %}
   {% endif %}
+  {% if session_expired %}
+  document.getElementById("error").textContent = "Your session expired after 30 minutes of inactivity. Please sign in again.";
+  {% endif %}
   {% if billing_canceled %}
   document.getElementById("error").textContent = "Checkout was canceled. You were not charged.";
   {% endif %}
   {% if verify_error %}
   document.getElementById("error").textContent = "That confirmation link is invalid or expired. Sign in to send a new one.";
   {% endif %}
+  {% if reset_error %}
+  document.getElementById("error").textContent = "That reset link is invalid or expired. Ask for a new one.";
+  {% endif %}
+
+  document.getElementById("forgot-open").addEventListener("click", () => {
+    document.getElementById("forgot-email").value = document.getElementById("email").value.trim();
+    document.getElementById("forgot-error").textContent = "";
+    setMode("forgot");
+  });
+  document.getElementById("forgot-back").addEventListener("click", () => setMode("signin"));
+  document.getElementById("reset-sent-back").addEventListener("click", () => setMode("signin"));
+
+  document.getElementById("forgot-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("forgot-error");
+    const button = document.getElementById("forgot-submit");
+    const email = document.getElementById("forgot-email").value.trim();
+    error.textContent = "";
+    error.style.color = "";
+    if (!email) {
+      error.textContent = "Enter your email.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await fetch("/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.email_sent === false) {
+        error.textContent = data.error || "Could not send that email. Try again.";
+        return;
+      }
+      showResetSent();
+    } catch (err) {
+      error.textContent = "Could not reach the server.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.getElementById("reset-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("reset-error");
+    const button = document.getElementById("reset-submit");
+    const password = document.getElementById("reset-password").value;
+    const confirmPassword = document.getElementById("reset-confirm").value;
+    error.textContent = "";
+    error.style.color = "";
+    if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+      error.textContent = "Password needs a letter, a number, and a symbol.";
+      return;
+    }
+    if (password !== confirmPassword) {
+      error.textContent = "Those passwords do not match.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await fetch("/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: {{ (reset_token or "")|tojson }},
+          password,
+          password_confirm: confirmPassword,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        error.textContent = data.error || "Could not save that password.";
+        return;
+      }
+      setMode("signin");
+      const signInError = document.getElementById("error");
+      signInError.style.color = "var(--green-dark)";
+      signInError.textContent = "Your password is updated. Sign in with the new one.";
+    } catch (err) {
+      error.textContent = "Could not reach the server.";
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   document.getElementById("resume-checkout").addEventListener("click", async () => {
     const error = document.getElementById("error");
@@ -355,7 +537,14 @@
       payload.first_name = document.getElementById("first-name").value.trim();
       payload.last_name = document.getElementById("last-name").value.trim();
       payload.password_confirm = confirmPassword;
-      payload.membership = document.querySelector('input[name="membership"]:checked').value;
+      payload.membership = selectedPlan();
+      if (payload.membership === "pilot") {
+        payload.pilot_code = document.getElementById("pilot-code").value.trim();
+        if (!payload.pilot_code) {
+          error.textContent = "Enter your pilot code.";
+          return;
+        }
+      }
     }
 
     submit.disabled = true;

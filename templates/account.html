@@ -255,6 +255,16 @@
         <div class="plan-price" id="plan-pro-price">$5.99 · unlimited worksheets</div>
       </button>
     </div>
+    <div id="pilot-panel" hidden>
+      <p class="hint" id="pilot-hint"></p>
+    </div>
+    <div class="field" id="pilot-redeem">
+      <label for="pilot-code">Pilot code</label>
+      <div class="row">
+        <input id="pilot-code" type="text" autocomplete="off" />
+        <button class="submit" type="button" id="pilot-redeem-btn">Redeem</button>
+      </div>
+    </div>
     <div class="status" id="billing-status"></div>
   </section>
 </main>
@@ -320,10 +330,34 @@
     document.getElementById("plan-pro-price").textContent = `$${price} · unlimited worksheets`;
     document.getElementById("plan-standard").classList.toggle("selected", !billing.is_pro);
     document.getElementById("plan-pro").classList.toggle("selected", !!billing.is_pro);
-    document.getElementById("billing-hint").textContent = billing.is_pro
-      ? `You are on ${billing.plan_name}. Choose Standard to cancel on Stripe.`
-      : `Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}.`;
+    const pilotPanel = document.getElementById("pilot-panel");
+    const pilotHint = document.getElementById("pilot-hint");
+    if (billing.pilot) {
+      pilotPanel.hidden = false;
+      pilotHint.textContent = `Pilot access until ${billing.pilot.ends} (${billing.pilot.name}).`;
+    } else {
+      pilotPanel.hidden = true;
+      pilotHint.textContent = "";
+    }
+    if (billing.is_paid_pro) {
+      document.getElementById("billing-hint").textContent =
+        `You are on ${billing.plan_name}. Choose Standard to cancel on Stripe.`;
+    } else if (billing.pilot) {
+      document.getElementById("billing-hint").textContent =
+        `You have pilot access. Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}.`;
+    } else {
+      document.getElementById("billing-hint").textContent =
+        `Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}.`;
+    }
   }
+
+  document.getElementById("pilot-redeem-btn").addEventListener("click", async () => {
+    const response = await send("/api/account/pilot-code", {
+      pilot_code: document.getElementById("pilot-code").value,
+    });
+    setStatus("billing-status", response.ok ? "Pilot access added." : response.error, response.ok);
+    if (response.ok) await loadAccount();
+  });
 
   async function choosePlan(wantPro, button) {
     if (!currentBilling || wantPro === !!currentBilling.is_pro) return;

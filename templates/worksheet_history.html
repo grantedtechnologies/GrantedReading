@@ -238,38 +238,41 @@
 
   <div class="sheets layout-grid" id="sheets">
   {% for sheet in worksheets %}
-  <article class="card sheet" data-sheet-id="{{ sheet.sheetid }}" data-student-id="{{ sheet.student_id }}" data-class-id="{{ sheet.class_id }}" data-title="{{ sheet.title }}">
+  <article class="card sheet" data-sheet-id="{{ sheet.sheetid }}" data-student-id="{{ sheet.student_id }}" data-class-id="{{ sheet.class_id }}" data-title="{{ sheet.worksheet_title or sheet.title }}">
     <div class="grid-only">
       <div class="pdf-frame">
-        <iframe data-src="/worksheets/{{ sheet.sheetid }}/view#toolbar=0&navpanes=0&scrollbar=0" title="{{ sheet.title }}"></iframe>
+        <iframe data-src="/worksheets/{{ sheet.sheetid }}/view?version={{ sheet.versionid }}#toolbar=0&navpanes=0&scrollbar=0" title="{{ sheet.title }}"></iframe>
       </div>
-      <div class="grid-title">{{ sheet.title }}</div>
-      <div class="grid-meta">{{ sheet.class_name or "No class" }} · {{ sheet.student }}</div>
-      <a class="view-btn grid-view" href="/worksheets/{{ sheet.sheetid }}/view" target="_blank" rel="noopener">View PDF</a>
+      <div class="grid-title">{{ sheet.worksheet_title or sheet.title }}</div>
+      <div class="grid-meta">{{ sheet.class_name or "No class" }} · {{ sheet.student }} · Downloaded {{ sheet.download_count }} time{% if sheet.download_count != 1 %}s{% endif %}</div>
+      <a class="view-btn grid-view" href="/worksheets/{{ sheet.sheetid }}/view?version={{ sheet.versionid }}" target="_blank" rel="noopener">View PDF</a>
     </div>
 
     <div class="column-only">
     <div class="sheet-head">
       <div>
-        <div class="sheet-title">{{ sheet.title }}</div>
-        <div class="sheet-date" data-utc="{{ sheet.created_at }}">{{ sheet.created_at }}</div>
+        <div class="sheet-title">{{ sheet.worksheet_title or sheet.title }}</div>
+        <div class="sheet-date">Last downloaded <span data-utc="{{ sheet.last_downloaded }}">{{ sheet.last_downloaded }}</span></div>
       </div>
-      <a class="view-btn" href="/worksheets/{{ sheet.sheetid }}/view" target="_blank" rel="noopener">View PDF</a>
+      <a class="view-btn" href="/worksheets/download/{{ sheet.generation_id }}" data-download="{{ sheet.generation_id }}">Download again</a>
     </div>
 
     <div class="facts">
       <div><div class="fact-label">Class</div><div class="fact-value">{{ sheet.class_name or "—" }}</div></div>
       <div><div class="fact-label">Student</div><div class="fact-value">{{ sheet.student }}</div></div>
+      <div><div class="fact-label">Level</div><div class="fact-value">{{ sheet.expected_level }} → {{ sheet.true_level }}</div></div>
+      <div><div class="fact-label">Type</div><div class="fact-value">{{ sheet.sheettype }}</div></div>
+      <div><div class="fact-label">Downloaded</div><div class="fact-value">{{ sheet.download_count }} time{% if sheet.download_count != 1 %}s{% endif %}</div></div>
       <div><div class="fact-label">DOK</div><div class="fact-value">{{ sheet.dok }}</div></div>
       <div><div class="fact-label">Interest</div><div class="fact-value">{{ sheet.interest or "—" }}</div></div>
       <div><div class="fact-label">Vocab</div><div class="fact-value">{{ sheet.vocab or "—" }}</div></div>
       <div><div class="fact-label">Phonics</div><div class="fact-value">{{ sheet.phonics or "—" }}</div></div>
     </div>
 
-    <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}">
+    <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}" data-generation-id="{{ sheet.generation_id }}">
       <div>
-        <label for="rating-{{ sheet.sheetid }}">Rating</label>
-        <select id="rating-{{ sheet.sheetid }}" name="rating">
+        <label for="rating-{{ sheet.versionid }}">Rating</label>
+        <select id="rating-{{ sheet.versionid }}" name="rating">
           <option value="">No rating</option>
           {% for value in range(rating_min, rating_max + 1) %}
           <option value="{{ value }}" {% if sheet.rating == value %}selected{% endif %}>{{ value }}</option>
@@ -277,8 +280,8 @@
         </select>
       </div>
       <div>
-        <label for="feedback-{{ sheet.sheetid }}">Feedback</label>
-        <textarea id="feedback-{{ sheet.sheetid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?">{{ sheet.feedback }}</textarea>
+        <label for="feedback-{{ sheet.versionid }}">Feedback</label>
+        <textarea id="feedback-{{ sheet.versionid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?">{{ sheet.feedback }}</textarea>
       </div>
       <button class="save-btn" type="submit">Save</button>
       <p class="form-status" role="status"></p>
@@ -394,6 +397,22 @@
   });
   if (sheets) applyLayout(localStorage.getItem("worksheet-history-layout") || "grid");
 
+  document.querySelectorAll("[data-download]").forEach((link) => {
+    link.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const response = await fetch(`/worksheets/download/${link.dataset.download}`, { method: "POST" });
+      if (!response.ok) return;
+      const url = URL.createObjectURL(await response.blob());
+      const temp = document.createElement("a");
+      temp.href = url;
+      temp.download = "worksheet.pdf";
+      document.body.appendChild(temp);
+      temp.click();
+      temp.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+  });
+
   document.querySelectorAll(".feedback-form").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -407,6 +426,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            generation_id: form.dataset.generationId,
             rating: form.elements.rating.value || null,
             feedback: form.elements.feedback.value,
           }),

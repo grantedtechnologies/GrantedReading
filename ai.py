@@ -3,9 +3,6 @@ import json
 import logging
 import os
 import re
-import resource
-import subprocess
-import sys
 import threading
 
 import file
@@ -333,31 +330,6 @@ def user_error_message(exc, resource="foundry") -> str:
     return GENERIC_RETRY
 
 
-def process_ram_mb() -> int:
-    """Resident memory of this process, as a whole number of megabytes."""
-    return max(1, round(_rss_bytes() / (1024 * 1024)))
-
-
-def _rss_bytes() -> int:
-    statm = "/proc/self/statm"
-    if os.path.exists(statm):
-        page = os.sysconf("SC_PAGE_SIZE") or 4096
-        with open(statm, encoding="utf-8") as handle:
-            parts = handle.read().split()
-        return int(parts[1]) * page
-    try:
-        out = subprocess.check_output(
-            ["ps", "-o", "rss=", "-p", str(os.getpid())],
-            text=True,
-        ).strip()
-        return int(out.split()[0]) * 1024
-    except (OSError, ValueError, subprocess.SubprocessError):
-        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        if sys.platform == "darwin":
-            return int(usage)
-        return int(usage) * 1024
-
-
 _PHONICS_CHUNK = re.compile(r"[A-Za-z]{2,12}")
 _STORY_WORD = re.compile(r"[A-Za-z][A-Za-z']*")
 
@@ -509,6 +481,73 @@ def parse_dok_levels(raw) -> list[int]:
     return [parse_dok_level(raw)]
 
 
+def parse_dok_counts(raw, question_count) -> dict[int, int]:
+    """Teacher-chosen counts per DOK type. Must sum to question_count."""
+    count = parse_question_count(question_count)
+    counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("Choose how many questions of each type.")
+    for key, value in raw.items():
+        level = parse_dok_level(key)
+        try:
+            n = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Choose how many questions of each type.") from exc
+        if n < 0 or n > MAX_WORKSHEET_QUESTIONS:
+            raise ValueError("Choose 0 to 8 questions of each type.")
+        counts[level] += n
+    if sum(counts.values()) != count:
+        raise ValueError(f"Assign all {count} questions across the DOK types.")
+    if not any(counts.values()):
+        raise ValueError("Choose how many questions of each type.")
+    return counts
+
+
+def slots_from_counts(counts) -> list[int]:
+    """Expand {1: 2, 3: 1} into [1, 1, 3]."""
+    slots = []
+    for level in (1, 2, 3, 4):
+        slots.extend([level] * int((counts or {}).get(level, 0) or 0))
+    return slots
+
+
+def parse_dok_slots(raw, question_count) -> list[int]:
+    """Ordered DOK level for each question. Length must match question_count."""
+    count = parse_question_count(question_count)
+    if not isinstance(raw, (list, tuple)) or len(raw) != count:
+        raise ValueError(f"Choose a DOK level for each of the {count} questions.")
+    slots = []
+    for item in raw:
+        if isinstance(item, bool) or item in (None, ""):
+            raise ValueError("Choose a DOK level for each question.")
+        if isinstance(item, int):
+            level = item
+        else:
+            match = re.fullmatch(r"[1-4]", str(item).strip())
+            level = int(match.group(0)) if match else None
+        if level not in DOK_LEVELS:
+            raise ValueError("Choose a DOK level for each question.")
+        slots.append(level)
+    return slots
+
+
+def assign_dok_slots(
+    question_count, dok_levels, dok_counts=None, dok_slots=None
+) -> list[int]:
+    """Map each question slot onto a DOK type.
+
+    Prefer an explicit per-question order, then per-type counts, then cycle
+    the selected types so the slot count always equals `question_count`.
+    """
+    count = parse_question_count(question_count)
+    if dok_slots is not None:
+        return parse_dok_slots(dok_slots, count)
+    if dok_counts is not None:
+        return slots_from_counts(parse_dok_counts(dok_counts, count))
+    levels = parse_dok_levels(dok_levels)
+    return [levels[index % len(levels)] for index in range(count)]
+
+
 def _question_keys(count: int) -> list[str]:
     return [f"q{index}" for index in range(1, count + 1)]
 
@@ -527,10 +566,27 @@ def ordered_question_items(questions) -> list[tuple[str, str]]:
     return [(f"q{number}", stem) for number, stem in items]
 
 
-def build_questions_prompt(story, title, dok_level, question_count=5, dok_levels=None):
+def build_questions_prompt(
+    story,
+    title,
+    dok_level,
+    question_count=5,
+    dok_levels=None,
+    dok_counts=None,
+    dok_slots=None,
+):
     """Question-only prompt. The story is already written; do not rewrite it."""
     count = parse_question_count(question_count)
-    levels = parse_dok_levels(dok_levels if dok_levels is not None else dok_level)
+    slots = assign_dok_slots(
+        count,
+        dok_levels if dok_levels is not None else dok_level,
+        dok_counts,
+        dok_slots,
+    )
+    levels = []
+    for level in slots:
+        if level not in levels:
+            levels.append(level)
     heading = title.strip() if title else "Untitled"
     keys_json = ",\n".join(f'    "{key}": "...?"' for key in _question_keys(count))
     if len(levels) == 1:
@@ -544,17 +600,24 @@ def build_questions_prompt(story, title, dok_level, question_count=5, dok_levels
             "Choose whatever stems fit this DOK level and this story."
         )
     else:
-        labels = ", ".join(f"DOK {level}" for level in levels)
+        slot_lines = "\n".join(
+            f"- {key}: DOK {level}"
+            for key, level in zip(_question_keys(count), slots)
+        )
+        counts = {level: slots.count(level) for level in levels}
+        mix = ", ".join(
+            f"{counts[level]} at DOK {level}" for level in levels if counts[level]
+        )
         demand = (
-            f"Write exactly {count} questions about the story below at mixed "
-            f"DOK levels: {labels}.\n"
-            "Mix those levels across the set. Include at least one question "
-            "at each listed DOK level when the count allows.\n\n"
+            f"Write exactly {count} questions about the story below.\n"
+            f"Use this exact mix ({mix}). Do not add or drop questions.\n"
+            f"Assign each question this DOK level:\n{slot_lines}\n\n"
             + "\n\n".join(DOK_INSTRUCTIONS[level] for level in levels)
             + "\n\n"
         )
         stem_rule = (
-            "Choose whatever stems fit the listed DOK levels and this story."
+            "Choose whatever stems fit that question's assigned DOK level "
+            "and this story."
         )
     return (
         "You are writing reading comprehension questions for a special "
@@ -646,13 +709,34 @@ def _log_dok_answerability(level: int):
 
 
 def generate_worksheet_questions(
-    story, title, dok_level, question_count=5, dok_levels=None
+    story,
+    title,
+    dok_level,
+    question_count=5,
+    dok_levels=None,
+    dok_counts=None,
+    dok_slots=None,
 ):
     """Second model call: questions only, at the requested DOK level(s)."""
     count = parse_question_count(question_count)
-    levels = parse_dok_levels(dok_levels if dok_levels is not None else dok_level)
+    slots = assign_dok_slots(
+        count,
+        dok_levels if dok_levels is not None else dok_level,
+        dok_counts,
+        dok_slots,
+    )
+    levels = []
+    for level in slots:
+        if level not in levels:
+            levels.append(level)
     prompt = build_questions_prompt(
-        story, title, levels[0], question_count=count, dok_levels=levels
+        story,
+        title,
+        levels[0],
+        question_count=count,
+        dok_levels=levels,
+        dok_counts=dok_counts,
+        dok_slots=slots,
     )
     raw_text = generate_text(prompt)
     questions = parse_questions_output(raw_text, count)
@@ -1028,6 +1112,8 @@ def generate_full_worksheet(
     dok_level=None,
     question_count=None,
     dok_levels=None,
+    dok_counts=None,
+    dok_slots=None,
 ):
     """Generate a worksheet, then run the reading-level pipeline on the story.
 
@@ -1094,17 +1180,30 @@ def generate_full_worksheet(
             "llm_rewrite_applied": False,
         }
 
-    levels = parse_dok_levels(dok_levels if dok_levels is not None else dok_level)
     count = parse_question_count(question_count)
+    slots = assign_dok_slots(
+        count,
+        dok_levels if dok_levels is not None else dok_level,
+        dok_counts,
+        dok_slots,
+    )
+    levels = []
+    for level in slots:
+        if level not in levels:
+            levels.append(level)
     model_data["questions"] = generate_worksheet_questions(
         model_data["story"],
         model_data.get("title", ""),
         levels[0],
         question_count=count,
         dok_levels=levels,
+        dok_counts=dok_counts,
+        dok_slots=slots,
     )
     model_data["dok_level"] = levels[0] if len(levels) == 1 else None
     model_data["dok_levels"] = levels
+    model_data["dok_slots"] = slots
+    model_data["dok_counts"] = {str(level): slots.count(level) for level in levels}
     model_data["question_count"] = count
 
     pdf_bytes, image_base64 = build_pdf_bytes(model_data, grade=grade)

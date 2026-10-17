@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import stripe
+from flask import g, has_request_context
 
-import cache
 import db
 
 log = logging.getLogger(__name__)
@@ -66,14 +66,41 @@ def price_id():
     return value
 
 
-def is_teacher_pro(teacher_id):
-    """True when the teacher's most recent subscription has a Pro status.
+def _cache_on_request(name, teacher_id, value):
+    if has_request_context():
+        setattr(g, name, value)
+        setattr(g, f"{name}_teacher_id", teacher_id)
+    return value
 
-    The status is whatever the last webhook wrote. currentPeriodEnd is not
-    compared against the clock; Stripe says when a subscription lapses.
-    """
-    subscription = db.latest_subscription(teacher_id)
-    return subscription is not None and subscription["status"] in PRO_STATUSES
+
+def _cached(name, teacher_id):
+    if not has_request_context():
+        return None
+    if getattr(g, f"{name}_teacher_id", None) != teacher_id:
+        return None
+    return getattr(g, name, None)
+
+
+def is_paid_pro(teacher_id):
+    """True when an active Stripe subscription exists. Pilot rows do not count."""
+    cached = _cached("is_paid_pro", teacher_id)
+    if cached is not None:
+        return cached
+    return _cache_on_request("is_paid_pro", teacher_id, db.paid_pro_exists(teacher_id))
+
+
+def has_pro_access(teacher_id):
+    """True when Stripe is active/trialing or a live pilot window covers now."""
+    cached = _cached("has_pro_access", teacher_id)
+    if cached is not None:
+        return cached
+    value = is_paid_pro(teacher_id) or db.active_pilot_exists(teacher_id)
+    return _cache_on_request("has_pro_access", teacher_id, value)
+
+
+def is_teacher_pro(teacher_id):
+    """Quota and Pro features use derived access, not a stored membership."""
+    return has_pro_access(teacher_id)
 
 
 def create_checkout_session(teacher, base_url, success_url=None, cancel_url=None):
@@ -91,7 +118,7 @@ def create_checkout_session(teacher, base_url, success_url=None, cancel_url=None
         "cancel_url": cancel_url or f"{base}/account?billing=canceled",
     }
     previous = db.latest_subscription(teacher["teacher_id"])
-    if previous:
+    if previous and previous.get("stripe_customer_id"):
         params["customer"] = previous["stripe_customer_id"]
     else:
         params["customer_email"] = teacher["email"]
@@ -181,20 +208,14 @@ def parse_event(payload, signature):
 def handle_event(event):
     """Apply one verified event. Returns a short outcome string for the log.
 
-    The event id is claimed in Redis first. A second delivery of the same id
-    returns "duplicate". If handling raises, the claim is released so Stripe's
-    retry is not skipped.
+    The event id is claimed in processed_webhook_events in the same transaction
+    as the subscription write. A second delivery of the same id is "duplicate".
+    A crash rolls both back, so Stripe's retry is not skipped.
     """
     event_type = event["type"]
     if event_type not in HANDLED_EVENTS:
         return "ignored"
-    if not cache.claim_webhook_event(event["id"]):
-        return "duplicate"
-    try:
-        return _apply_event(event)
-    except Exception:
-        cache.release_webhook_event(event["id"])
-        raise
+    return _apply_event(event)
 
 
 def _apply_event(event):
@@ -206,11 +227,11 @@ def _apply_event(event):
             "Stripe invoice %s payment failed for customer %s (subscription %s)",
             obj.get("id"), obj.get("customer"), _invoice_subscription_id(obj),
         )
-        return "recorded"
+        return _record_event_only(event)
 
     if event_type == "checkout.session.completed":
         if obj.get("mode") != "subscription" or not obj.get("subscription"):
-            return "recorded"
+            return _record_event_only(event)
         teacher_id = _teacher_id(obj.get("client_reference_id"), obj.get("metadata"))
         subscription = _current_subscription(_object_id(obj["subscription"]), None)
     else:
@@ -221,13 +242,20 @@ def _apply_event(event):
     if event_type == "customer.subscription.deleted":
         row["status"] = "canceled"
         row["canceled_at"] = row["canceled_at"] or _utc_now()
-    outcome = db.save_subscription(row)
+    outcome = db.apply_stripe_event(event["id"], event_type, row)
     if outcome == "no_row":
         log.warning(
             "Stripe %s for subscription %s has no teacher to attach it to",
             event_type, row["subscription_id"],
         )
     return outcome
+
+
+def _record_event_only(event):
+    with db.engine.begin() as conn:
+        if not db.claim_webhook_event(conn, event["id"], event["type"]):
+            return "duplicate"
+    return "recorded"
 
 
 def _current_subscription(subscription_id, fallback):
@@ -252,11 +280,13 @@ def _subscription_row(subscription, teacher_id):
         canceled_at = _from_timestamp(
             subscription.get("ended_at") or subscription.get("canceled_at")
         )
+    price = item.get("price") if isinstance(item.get("price"), dict) else {}
     return {
         "teacher_id": teacher_id,
         "customer_id": _object_id(subscription["customer"]),
         "subscription_id": subscription["id"],
-        "price": _price_amount(item.get("price")),
+        "price_id": price.get("id"),
+        "price": _price_amount(price),
         "status": status,
         "current_period_end": _from_timestamp(period_end),
         "created_at": _from_timestamp(subscription.get("created")) or _utc_now(),

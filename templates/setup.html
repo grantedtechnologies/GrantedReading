@@ -63,7 +63,7 @@
 
 <main class="page">
   <h1 class="page-title">Add your classes</h1>
-  <p class="lead">{% if from_account %}Add a class for each group you teach. You can open a class from the menu later to add students.{% else %}Your email is confirmed. Add the classes you teach. You can open a class from the menu later to add students.{% endif %}</p>
+  <p class="lead">{% if from_account %}Add a class for each group you teach. You can open a class from the menu later to add students.{% else %}Your email is confirmed. Add a class, then add a student.{% endif %}</p>
 
   <section class="card">
     <h2>Classes</h2>
@@ -95,9 +95,11 @@
     <div id="class-list" style="margin-top:18px"></div>
   </section>
 
+  {% if from_account %}
   <div class="actions">
     <a class="continue" href="{{ after_setup }}">{{ after_label }}</a>
   </div>
+  {% endif %}
 </main>
 
 <script>
@@ -109,6 +111,7 @@
     { value: 10, label: "10th" }, { value: 11, label: "11th" }, { value: 12, label: "12th" },
   ];
   let classes = [];
+  const fromAccount = {{ 'true' if from_account else 'false' }};
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -214,6 +217,11 @@
     btn.disabled = false;
     setStatus("class-status", response.ok ? "Class added." : response.error, response.ok);
     if (response.ok) {
+      const classId = response.data.class && response.data.class.class_id;
+      if (!fromAccount && classId) {
+        window.location.href = `/classes/${classId}/students/new`;
+        return;
+      }
       document.getElementById("class-name").value = "";
       document.getElementById("class-subject").value = "";
       await loadAccount();

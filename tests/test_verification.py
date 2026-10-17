@@ -71,6 +71,80 @@ def test_unverified_signup_can_be_retried(monkeypatch):
     assert calls == [(9, "Ada", "Lovelace", "Pass1!")]
 
 
+def test_unknown_pilot_code_does_not_create_an_account(monkeypatch):
+    created = []
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(app_module.db, "find_pilot_by_code", lambda code: None)
+    monkeypatch.setattr(app_module.db, "create_teacher", lambda *args: created.append(args))
+    monkeypatch.setattr(app_module.db, "create_teacher_with_pilot", lambda *args: created.append(args))
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=_signup_body(membership="pilot", pilot_code="NOPE"))
+    assert response.status_code == 400
+    assert "does not exist" in response.get_json()["error"].lower()
+    assert created == []
+
+
+def test_expired_pilot_code_does_not_create_an_account(monkeypatch):
+    created = []
+    from datetime import datetime
+
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(
+        app_module.db,
+        "find_pilot_by_code",
+        lambda code: {
+            "pilotid": 2,
+            "name": "Spring",
+            "startTime": datetime(2026, 1, 1),
+            "endTime": datetime(2026, 6, 1),
+        },
+    )
+    monkeypatch.setattr(app_module.db, "create_teacher_with_pilot", lambda *args: created.append(args))
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=_signup_body(membership="pilot", pilot_code="SPRING2026"))
+    assert response.status_code == 400
+    assert "no longer active" in response.get_json()["error"].lower()
+    assert created == []
+
+
+def test_live_pilot_skips_payment_and_sends_confirmation(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    created = []
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(
+        app_module.db,
+        "find_pilot_by_code",
+        lambda code: {
+            "pilotid": 1,
+            "name": "Riverside",
+            "startTime": now - timedelta(days=1),
+            "endTime": now + timedelta(days=30),
+        },
+    )
+    monkeypatch.setattr(
+        app_module.db,
+        "create_teacher_with_pilot",
+        lambda *args: created.append(args) or {
+            "teacher_id": 9,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@x.test",
+            "verified": 0,
+        },
+    )
+    monkeypatch.setattr(app_module, "_issue_verification", lambda *args: True)
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=_signup_body(membership="pilot", pilot_code="RIVERSIDE2026"))
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["email_sent"] is True
+    assert data["needs_verification"] is True
+    assert "checkout_url" not in data
+    assert created and created[0][-1]["pilotid"] == 1
+
+
 def test_verified_email_cannot_be_signed_up_again(monkeypatch):
     monkeypatch.setattr(
         app_module.db,
@@ -158,3 +232,88 @@ def test_verification_email_posts_to_mailtrap_api(monkeypatch):
     assert payload["to"] == [{"email": "ada@x.test"}]
     assert "Confirm your Granted Reading" in payload["subject"]
     assert "http://127.0.0.1:5000/verify?token=" in payload["text"]
+    assert payload["category"] == "email_verification"
+
+
+def test_unknown_email_still_says_a_reset_was_sent(monkeypatch):
+    sent = []
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(app_module, "_issue_password_reset", lambda *args: sent.append(args))
+    with _client(monkeypatch) as client:
+        response = client.post("/forgot-password", json={"email": "missing@x.test"})
+    assert response.status_code == 200
+    assert response.get_json()["email_sent"] is True
+    assert sent == []
+
+
+def test_reset_email_uses_its_own_link(monkeypatch):
+    captured = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.requests, "post", fake_post)
+    monkeypatch.setitem(app_module.app.config, "MAIL_PASSWORD", "token")
+    monkeypatch.setattr(
+        app_module.db,
+        "find_teacher_by_email",
+        lambda email: {
+            "teacher_id": 9,
+            "first_name": "Ada",
+            "email": "ada@x.test",
+            "verified": 1,
+        },
+    )
+    with _client(monkeypatch) as client:
+        response = client.post("/forgot-password", json={"email": "ada@x.test"})
+    assert response.status_code == 200
+    payload = captured[0]
+    assert payload["category"] == "password_reset"
+    assert "/reset?token=" in payload["text"]
+    assert "/verify?token=" not in payload["text"]
+    token = payload["text"].split("/reset?token=", 1)[1].split()[0]
+    assert app_module.confirm_token(token) is None
+    assert app_module.read_reset_token(token) == "ada@x.test"
+
+
+def test_reset_saves_the_new_password(monkeypatch):
+    saved = []
+    token = app_module.generate_reset_token("ada@x.test")
+    monkeypatch.setattr(
+        app_module.db,
+        "find_teacher_by_email",
+        lambda email: {"teacher_id": 9, "email": email, "verified": 1},
+    )
+    monkeypatch.setattr(
+        app_module.db,
+        "set_teacher_password",
+        lambda teacher_id, password: saved.append((teacher_id, password)),
+    )
+    with _client(monkeypatch) as client:
+        response = client.post("/reset", json={
+            "token": token,
+            "password": "Newpass1!",
+            "password_confirm": "Newpass1!",
+        })
+    assert response.status_code == 200
+    assert saved == [(9, "Newpass1!")]
+
+
+def test_confirmation_token_cannot_reset_a_password(monkeypatch):
+    saved = []
+    token = app_module.generate_confirmation_token("ada@x.test")
+    monkeypatch.setattr(app_module.db, "set_teacher_password", lambda *args: saved.append(args))
+    with _client(monkeypatch) as client:
+        response = client.post("/reset", json={
+            "token": token,
+            "password": "Newpass1!",
+            "password_confirm": "Newpass1!",
+        })
+    assert response.status_code == 400
+    assert "invalid or expired" in response.get_json()["error"].lower()
+    assert saved == []

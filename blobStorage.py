@@ -17,23 +17,9 @@ def _env_text(name):
     return (os.getenv(name) or "").strip().strip("'\"")
 
 
-def _on_railway():
-    return bool(
-        os.getenv("RAILWAY_ENVIRONMENT")
-        or os.getenv("RAILWAY_PROJECT_ID")
-        or os.getenv("RAILWAY_SERVICE_ID")
-    )
-
-
 def container_name():
-    # Railway sets RAILWAY_ENVIRONMENT on the deployed service, so that
-    # process uses the production container. A laptop uses the dev one.
-    # AZURE_STORAGE_CONTAINER_NAME still works when the matching name is unset.
-    if _on_railway():
-        name = _env_text("AZURE_STORAGE_PROD_CONTAINER")
-    else:
-        name = _env_text("AZURE_STORAGE_DEV_CONTAINER")
-    return name or _env_text("AZURE_STORAGE_CONTAINER_NAME")
+    # Local and deployed processes both use the dev container.
+    return "devsheets"
 
 
 def _service_client():
@@ -56,8 +42,8 @@ def _container_client():
     return _container
 
 
-def worksheet_key(teacher_id, sheet_id):
-    return f"teacher_{teacher_id}/{sheet_id}.pdf"
+def worksheet_key(teacher_id, sheet_id, generation_id, suffix="pdf"):
+    return f"{teacher_id}/{sheet_id}/{generation_id}.{suffix}"
 
 
 def _blob_error(exc):

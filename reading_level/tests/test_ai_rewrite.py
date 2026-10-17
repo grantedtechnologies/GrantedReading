@@ -745,12 +745,44 @@ def test_questions_prompt_uses_count_and_custom_levels():
     assert '"q3": "...?"' in three
     assert '"q4"' not in three
     custom = ai.build_questions_prompt(
-        story, "The Walk", 1, question_count=4, dok_levels=[1, 3]
+        story,
+        "The Walk",
+        1,
+        question_count=7,
+        dok_slots=[2, 1, 3, 1, 2, 4, 1],
     )
-    assert "mixed DOK levels: DOK 1, DOK 3" in custom
+    assert "Write exactly 7 questions" in custom
+    assert "2 at DOK 2, 3 at DOK 1, 1 at DOK 3, 1 at DOK 4" in custom
+    assert "Do not add or drop questions" in custom
+    assert "- q1: DOK 2" in custom
+    assert "- q2: DOK 1" in custom
+    assert "- q7: DOK 1" in custom
+    assert '"q7": "...?"' in custom
+    assert '"q8"' not in custom
     assert "Recall & Reproduction" in custom
     assert "Strategic Thinking" in custom
-    assert "Write exactly 4 questions" in custom
+
+
+def test_assign_dok_slots_follows_question_count():
+    assert ai.assign_dok_slots(5, [1, 2, 3]) == [1, 2, 3, 1, 2]
+    assert ai.assign_dok_slots(2, [1, 2, 3, 4]) == [1, 2]
+    assert ai.assign_dok_slots(4, [2]) == [2, 2, 2, 2]
+    assert ai.assign_dok_slots(7, [1], {1: 3, 2: 2, 3: 1, 4: 1}) == [
+        1, 1, 1, 2, 2, 3, 4,
+    ]
+    assert ai.assign_dok_slots(3, [1], dok_slots=[3, 1, 2]) == [3, 1, 2]
+
+
+def test_parse_dok_counts_must_sum_to_question_count():
+    assert ai.parse_dok_counts({1: 3, 2: 4}, 7) == {1: 3, 2: 4, 3: 0, 4: 0}
+    with pytest.raises(ValueError, match="Assign all 7"):
+        ai.parse_dok_counts({1: 2, 2: 2}, 7)
+
+
+def test_parse_dok_slots_keeps_order():
+    assert ai.parse_dok_slots([2, 1, 3, 1], 4) == [2, 1, 3, 1]
+    with pytest.raises(ValueError, match="each of the 4"):
+        ai.parse_dok_slots([1, 2], 4)
 
 
 def test_parse_questions_output_respects_count():

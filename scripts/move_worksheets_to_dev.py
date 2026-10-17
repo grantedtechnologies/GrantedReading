@@ -1,9 +1,8 @@
-"""Move every blob from the production container into the dev container.
+"""Copy every blob from the old worksheet container into devsheets.
 
-Worksheets saved before the split live in AZURE_STORAGE_PROD_CONTAINER
-(worksheet). Local development reads AZURE_STORAGE_DEV_CONTAINER (devsheets).
-Each blob keeps its name. The source is deleted only after the copy reports
-the same size.
+The app always reads and writes the devsheets container. This script is only
+for files that were saved in the old worksheet container. Each blob keeps its
+name. The source is deleted only after the copy reports the same size.
 
 Run from the project root:
 
@@ -17,8 +16,8 @@ import blobStorage
 
 
 def main():
-    source_name = blobStorage._env_text("AZURE_STORAGE_PROD_CONTAINER") or "worksheet"
-    dest_name = blobStorage._env_text("AZURE_STORAGE_DEV_CONTAINER") or "devsheets"
+    source_name = "worksheet"
+    dest_name = "devsheets"
     if source_name == dest_name:
         print(f"Source and destination are both {source_name}. Nothing to move.")
         return 1

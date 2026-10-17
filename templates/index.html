@@ -161,26 +161,27 @@
     border-top: 1px solid var(--border);
   }
 
-  .dok-types {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+  .dok-slots {
+    display: flex;
+    flex-direction: column;
     gap: 8px;
     margin-top: 10px;
   }
-  .dok-type {
+  .dok-slot {
     display: flex;
-    align-items: flex-start;
-    gap: 8px;
+    align-items: center;
+    gap: 10px;
+  }
+  .dok-slot-label {
+    flex: 0 0 92px;
     font-size: 13px;
     font-weight: 700;
     color: var(--ink);
-    background: var(--bg);
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 10px;
-    cursor: pointer;
   }
-  .dok-type input { margin-top: 2px; }
+  .dok-slot select {
+    flex: 1;
+    min-width: 0;
+  }
 
   .field { margin-bottom: 20px; }
 
@@ -270,6 +271,12 @@
     background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 12px center;
     padding-right: 32px; cursor: pointer;
+  }
+
+  select:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    background-color: var(--bg);
   }
 
   select:focus, textarea:focus, input[type="text"]:focus { border-color: var(--green); }
@@ -369,17 +376,6 @@
     background: #fef2f2; border: 1px solid #fecaca;
     border-radius: var(--radius); padding: 12px 14px;
     font-size: 13px; color: #b91c1c;
-  }
-
-  .ram-stat {
-    display: none;
-    margin-top: 12px;
-    text-align: center;
-    font-family: var(--font);
-    font-size: 13px;
-    font-weight: 800;
-    color: var(--muted);
-    letter-spacing: 0.02em;
   }
 
   .review-panel { display: flex; flex-direction: column; }
@@ -552,14 +548,21 @@
 
         <div class="field">
           <div class="field-label-row">
-            <label class="field-label" for="student-select">Student</label>
+            <label class="field-label" for="class-select">Class</label>
             <span class="info-tip">
-              <button type="button" class="info-tip-btn" aria-label="About student" aria-describedby="student-hint">i</button>
-              <span class="info-tip-bubble" id="student-hint" role="tooltip">Sign in to load your students, or fill the form by hand.</span>
+              <button type="button" class="info-tip-btn" aria-label="About class and student" aria-describedby="student-hint">i</button>
+              <span class="info-tip-bubble" id="student-hint" role="tooltip">Sign in to load your classes, or fill the form by hand.</span>
             </span>
           </div>
-          <select id="student-select">
-            <option value="">Choose a student…</option>
+          <select id="class-select">
+            <option value="">Choose a class…</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="student-select">Student</label>
+          <select id="student-select" disabled>
+            <option value="">Choose a class first…</option>
           </select>
         </div>
 
@@ -613,29 +616,6 @@
         </div>
 
         <div class="field">
-          <div class="field-label-row">
-            <label class="field-label" for="dok-level">Question DOK level</label>
-            <span class="info-tip">
-              <button type="button" class="info-tip-btn" aria-label="About question DOK level" aria-describedby="dok-hint">i</button>
-              <span class="info-tip-bubble" id="dok-hint" role="tooltip">What kinds of questions do you want your student to answer about this story?</span>
-            </span>
-          </div>
-          <select id="dok-level">
-            <option value="1">DOK 1 — Recall: the answer is stated in the text</option>
-            <option value="2">DOK 2 — Basic reasoning: connect two or more details</option>
-            <option value="3">DOK 3 — Inference: draw a conclusion and cite evidence</option>
-            <option value="4">DOK 4 — Extended response: connect the story to real life</option>
-            <option value="custom">Custom — pick the question types</option>
-          </select>
-          <div id="dok-custom-types" class="dok-types hidden">
-            <label class="dok-type"><input type="checkbox" name="dok-type" value="1" /> DOK 1 — Recall</label>
-            <label class="dok-type"><input type="checkbox" name="dok-type" value="2" /> DOK 2 — Basic reasoning</label>
-            <label class="dok-type"><input type="checkbox" name="dok-type" value="3" /> DOK 3 — Inference</label>
-            <label class="dok-type"><input type="checkbox" name="dok-type" value="4" /> DOK 4 — Extended response</label>
-          </div>
-        </div>
-
-        <div class="field">
           <label class="field-label" for="question-count">How many questions?</label>
           <select id="question-count">
             <option value="1">1 question</option>
@@ -647,6 +627,24 @@
             <option value="7">7 questions</option>
             <option value="8">8 questions</option>
           </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label class="field-label" for="dok-level">Question DOK level</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn" aria-label="About question DOK level" aria-describedby="dok-hint">i</button>
+              <span class="info-tip-bubble" id="dok-hint" role="tooltip">What kinds of questions do you want? Custom lets you set the DOK level for each question, in order.</span>
+            </span>
+          </div>
+          <select id="dok-level">
+            <option value="1">DOK 1 — Recall: the answer is stated in the text</option>
+            <option value="2">DOK 2 — Basic reasoning: connect two or more details</option>
+            <option value="3">DOK 3 — Inference: draw a conclusion and cite evidence</option>
+            <option value="4">DOK 4 — Extended response: connect the story to real life</option>
+            <option value="custom">Custom — set each question's DOK level</option>
+          </select>
+          <div id="dok-custom-types" class="dok-slots hidden"></div>
         </div>
 
         <div class="form-section-label optional">Optional</div>
@@ -702,7 +700,6 @@
         <button class="generate-btn" id="generate-btn" onclick="generateWorksheet()">
           Generate
         </button>
-        <p class="ram-stat" id="ram-stat"></p>
 
       </div>
     </div>
@@ -1013,17 +1010,58 @@
 
   initPhonicsCombo();
 
-  function selectedDokTypes() {
-    return Array.from(document.querySelectorAll('input[name="dok-type"]:checked'))
-      .map((input) => input.value);
+  const DOK_SLOT_OPTIONS = [
+    ["1", "DOK 1 — Recall"],
+    ["2", "DOK 2 — Basic reasoning"],
+    ["3", "DOK 3 — Inference"],
+    ["4", "DOK 4 — Extended response"]
+  ];
+
+  function questionCountValue() {
+    return Number(document.getElementById("question-count").value) || 5;
+  }
+
+  function selectedDokSlots() {
+    return Array.from(document.querySelectorAll("[data-dok-slot]")).map((select) =>
+      Number(select.value) || 1
+    );
+  }
+
+  function fillDokSlots() {
+    const box = document.getElementById("dok-custom-types");
+    const previous = selectedDokSlots();
+    const total = questionCountValue();
+    box.innerHTML = "";
+    for (let index = 1; index <= total; index++) {
+      const row = document.createElement("label");
+      row.className = "dok-slot";
+      const name = document.createElement("span");
+      name.className = "dok-slot-label";
+      name.textContent = `Question ${index}`;
+      const select = document.createElement("select");
+      select.dataset.dokSlot = String(index);
+      select.setAttribute("aria-label", `Question ${index} DOK level`);
+      DOK_SLOT_OPTIONS.forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.appendChild(option);
+      });
+      select.value = String(previous[index - 1] || 1);
+      row.append(name, select);
+      box.appendChild(row);
+    }
   }
 
   function syncDokCustom() {
     const custom = document.getElementById("dok-level").value === "custom";
     document.getElementById("dok-custom-types").classList.toggle("hidden", !custom);
+    if (custom) fillDokSlots();
   }
 
+  fillDokSlots();
   document.getElementById("dok-level").addEventListener("change", syncDokCustom);
+  document.getElementById("question-count").addEventListener("change", fillDokSlots);
 
   function questionEntries(questions) {
     return Object.keys(questions || {})
@@ -1070,23 +1108,20 @@
   }
 
   function showWorksheetResult(data) {
+    const questions = {};
+    questionEntries(data.content?.questions || {}).forEach(([number, text]) => {
+      if (String(text || "").trim()) questions[`q${number}`] = text;
+    });
     reviewContent = {
       title: data.content?.title || "",
       story: data.content?.story || "",
-      questions: {
-        q1: data.content?.questions?.q1 || "",
-        q2: data.content?.questions?.q2 || "",
-        q3: data.content?.questions?.q3 || "",
-        q4: data.content?.questions?.q4 || "",
-        q5: data.content?.questions?.q5 || ""
-      }
+      questions
     };
 
     currentImageBase64 = data.image_base64 || null;
     currentGenerationId = data.generation_id || null;
     populateReviewPanel(reviewContent);
     showPdfFromBase64(data.pdf_base64, reviewContent.title);
-    showRam(data.ram_mb);
 
     const editOpen = document.getElementById("review-form").style.display === "flex";
 
@@ -1203,39 +1238,89 @@
     document.querySelectorAll(".info-tip.open").forEach((tip) => tip.classList.remove("open"));
   });
 
+  function fillStudentOptions(classId, keepStudentId) {
+    const select = document.getElementById("student-select");
+    select.innerHTML = "";
+    if (!classId) {
+      select.disabled = true;
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Choose a class first…";
+      select.appendChild(option);
+      applyStudent(null);
+      return;
+    }
+    const inClass = students.filter((item) => String(item.class_id) === String(classId));
+    select.disabled = false;
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = inClass.length ? "Choose a student…" : "No students in this class";
+    select.appendChild(placeholder);
+    inClass.forEach((student) => {
+      const option = document.createElement("option");
+      option.value = String(student.student_id);
+      option.textContent = `${student.first_name} ${student.last_name}`;
+      select.appendChild(option);
+    });
+    if (keepStudentId && inClass.some((item) => String(item.student_id) === String(keepStudentId))) {
+      select.value = String(keepStudentId);
+      applyStudent(inClass.find((item) => String(item.student_id) === String(keepStudentId)));
+      return;
+    }
+    applyStudent(null);
+  }
+
+  document.getElementById("class-select").addEventListener("change", (event) => {
+    fillStudentOptions(event.target.value);
+  });
+
   document.getElementById("student-select").addEventListener("change", (event) => {
     const student = students.find((item) => String(item.student_id) === event.target.value);
     applyStudent(student || null);
   });
 
-  async function loadStudents() {
-    const select = document.getElementById("student-select");
+  async function loadRoster() {
+    const classSelect = document.getElementById("class-select");
     const hint = document.getElementById("student-hint");
     try {
-      const response = await fetch("/api/students");
-      const data = await response.json();
-      if (!response.ok) {
-        hint.textContent = data.error || "Sign in to load your students, or fill the form by hand.";
+      const [classResponse, studentResponse] = await Promise.all([
+        fetch("/api/classes"),
+        fetch("/api/students"),
+      ]);
+      const classData = await classResponse.json();
+      const studentData = await studentResponse.json();
+      if (!classResponse.ok || !studentResponse.ok) {
+        hint.textContent = classData.error || studentData.error
+          || "Sign in to load your classes, or fill the form by hand.";
         return;
       }
-      students = data.students || [];
-      students.forEach((student) => {
+      const classrooms = classData.classes || [];
+      students = studentData.students || [];
+      classrooms.forEach((classroom) => {
         const option = document.createElement("option");
-        option.value = String(student.student_id);
-        option.textContent = student.class_name
-          ? `${student.first_name} ${student.last_name} · ${student.class_name}`
-          : `${student.first_name} ${student.last_name}`;
-        select.appendChild(option);
+        option.value = String(classroom.class_id);
+        option.textContent = classroom.school_year
+          ? `${classroom.name} · ${classroom.school_year}`
+          : classroom.name;
+        classSelect.appendChild(option);
       });
-      hint.textContent = students.length
-        ? "Pick a student to fill grade, reading level, and vocab."
-        : "No students yet. Fill the form by hand.";
+      if (classrooms.length === 1) {
+        classSelect.value = String(classrooms[0].class_id);
+        fillStudentOptions(classSelect.value);
+      }
+      if (!classrooms.length) {
+        hint.textContent = "No classes yet. Fill the form by hand.";
+      } else if (!students.length) {
+        hint.textContent = "No students yet. Pick a class, or fill the form by hand.";
+      } else {
+        hint.textContent = "Pick a class, then a student to fill grade, reading level, and vocab.";
+      }
     } catch (err) {
-      hint.textContent = "Could not load students. Fill the form by hand.";
+      hint.textContent = "Could not load classes. Fill the form by hand.";
     }
   }
 
-  loadStudents();
+  loadRoster();
 
   function setStep(n) {
     for (let i = 1; i <= 4; i++) {
@@ -1268,17 +1353,19 @@
     }
     const focusPhonics = document.getElementById("focus-phonics").value.trim();
     const dokLevel = document.getElementById("dok-level").value;
-    const questionCount = document.getElementById("question-count").value;
-    const dokLevels = dokLevel === "custom" ? selectedDokTypes() : [dokLevel];
+    const questionCount = questionCountValue();
+    const dokSlots = dokLevel === "custom" ? selectedDokSlots() : null;
+    const dokLevels = dokLevel === "custom"
+      ? [...new Set(dokSlots)]
+      : [dokLevel];
     const errorBox     = document.getElementById("error-box");
     errorBox.style.display = "none";
-    showRam(null);
 
     if (!selectedGrade) { showError("Please select the student's grade."); return; }
     if (!readingLevel)  { showError("Please select a reading level."); return; }
     if (!interests)     { showError("Please describe the student's interests."); return; }
-    if (dokLevel === "custom" && !dokLevels.length) {
-      showError("Pick at least one question type.");
+    if (dokLevel === "custom" && dokSlots.length !== questionCount) {
+      showError("Choose a DOK level for each question.");
       return;
     }
 
@@ -1306,7 +1393,8 @@
           focus_phonics: focusPhonics,
           dok_level: dokLevel,
           dok_levels: dokLevels,
-          question_count: Number(questionCount),
+          dok_slots: dokSlots,
+          question_count: questionCount,
           student_id: selectedStudent ? selectedStudent.student_id : null,
           vocab_list_id: vocabListId
         })
@@ -1416,22 +1504,9 @@
     document.getElementById("status-area").style.display = "none";
     document.getElementById("error-box").style.display = "none";
     document.getElementById("image-feedback").value = "";
-    showRam(null);
     const btn = document.getElementById("generate-btn");
     btn.disabled = false;
     btn.innerHTML = "Generate";
-  }
-
-  function showRam(mb) {
-    const el = document.getElementById("ram-stat");
-    if (!el) return;
-    if (mb == null || mb === "") {
-      el.textContent = "";
-      el.style.display = "none";
-      return;
-    }
-    el.textContent = `${mb} MB`;
-    el.style.display = "block";
   }
 
   function showError(msg) {

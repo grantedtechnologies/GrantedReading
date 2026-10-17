@@ -1,10 +1,11 @@
-"""Reset MySQL and the teacher-attached worksheets in Blob Storage.
+"""Reset the local MySQL database and teacher-attached worksheets in Blob Storage.
 
-Reloads granted.sql (drops granteddb, recreates the tables, and inserts the
-seed teachers, students, and vocab). Then deletes blob PDFs stored under
-a teacher (teacher_{id}/...). PDFs sitting at the container root stay.
+Reloads granted.sql (drops granteddb and recreates the tables), then loads
+seed_dev.sql. That seed is DEV ONLY: personas, classes, sessions, and
+Events for those rows. Worksheets and versions stay empty. Then deletes
+blob PDFs stored under a teacher. PDFs sitting at the container root stay.
 
-Run from the project root:
+Do not run this against production. It uses LOCAL_DATABASE_* on a laptop.
 
     PYTHONPATH=. ./venv/bin/python seed_both.py
 """
@@ -18,6 +19,7 @@ import blobStorage
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_PATH = os.path.join(ROOT, "granted.sql")
+SEED_PATH = os.path.join(ROOT, "seed_dev.sql")
 
 
 def _env(*names, default=""):
@@ -59,10 +61,10 @@ def _server_connection():
     )
 
 
-def _schema_statements():
+def _sql_statements(path):
     statements = []
     chunk = []
-    with open(SCHEMA_PATH, encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         for line in handle:
             if line.strip().startswith("--"):
                 continue
@@ -78,35 +80,45 @@ def _schema_statements():
     return statements
 
 
-def reload_schema():
-    statements = _schema_statements()
-    connection = _server_connection()
-    try:
-        with connection.cursor() as cursor:
-            for statement in statements:
-                cursor.execute(statement)
-    finally:
-        connection.close()
+def _run_sql(cursor, path):
+    statements = _sql_statements(path)
+    for statement in statements:
+        cursor.execute(statement)
     return len(statements)
 
 
+def reload_schema():
+    connection = _server_connection()
+    try:
+        with connection.cursor() as cursor:
+            schema_count = _run_sql(cursor, SCHEMA_PATH)
+            seed_count = _run_sql(cursor, SEED_PATH)
+    finally:
+        connection.close()
+    return schema_count, seed_count
+
+
 def clear_attached_worksheets():
-    """Delete blobs named teacher_{id}/... and keep everything else."""
+    """Delete teacher-attached blobs and keep everything else."""
     container = blobStorage._container_client()
     removed = []
     kept = 0
     for blob in container.list_blobs():
-        if blob.name.startswith("teacher_"):
-            blobStorage.delete_pdf(blob.name)
-            removed.append(blob.name)
+        name = blob.name
+        if name.startswith("teacher_") or name.split("/", 1)[0].isdigit():
+            blobStorage.delete_pdf(name)
+            removed.append(name)
         else:
             kept += 1
     return removed, kept
 
 
 def main():
-    count = reload_schema()
-    print(f"Reloaded granted.sql ({count} statements).")
+    if _on_railway():
+        print("seed_both.py refuses to run when Railway environment variables are set.")
+        return 1
+    schema_count, seed_count = reload_schema()
+    print(f"Reloaded granted.sql ({schema_count} statements) and seed_dev.sql ({seed_count} statements).")
     removed, kept = clear_attached_worksheets()
     if removed:
         print(f"Removed {len(removed)} teacher-attached worksheet(s):")

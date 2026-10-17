@@ -29,9 +29,18 @@ def _subscription(status):
         ("unpaid", False),
     ],
 )
-def test_is_teacher_pro_follows_the_latest_status(monkeypatch, status, expected):
-    monkeypatch.setattr(db, "latest_subscription", lambda teacher_id: _subscription(status))
-    assert billing.is_teacher_pro(7) is expected
+def test_is_paid_pro_follows_an_active_stripe_row(monkeypatch, status, expected):
+    monkeypatch.setattr(db, "paid_pro_exists", lambda teacher_id: expected)
+    monkeypatch.setattr(db, "active_pilot_exists", lambda teacher_id: False)
+    assert billing.is_paid_pro(7) is expected
+    assert billing.has_pro_access(7) is expected
+
+
+def test_has_pro_access_is_true_for_a_live_pilot(monkeypatch):
+    monkeypatch.setattr(db, "paid_pro_exists", lambda teacher_id: False)
+    monkeypatch.setattr(db, "active_pilot_exists", lambda teacher_id: True)
+    assert billing.is_paid_pro(7) is False
+    assert billing.has_pro_access(7) is True
 
 
 def _signed(payload, secret=TEST_SECRET, timestamp=None):
@@ -108,7 +117,7 @@ def test_checkout_refuses_a_teacher_who_is_already_pro(client, monkeypatch):
     import app as app_module
 
     monkeypatch.setattr(app_module, "_verified_teacher", lambda: {"teacher_id": 3, "email": "t@x.test"})
-    monkeypatch.setattr(billing, "is_teacher_pro", lambda teacher_id: True)
+    monkeypatch.setattr(billing, "is_paid_pro", lambda teacher_id: True)
     monkeypatch.setattr(
         billing, "create_checkout_session", lambda *a: pytest.fail("must not start a second subscription")
     )
@@ -117,33 +126,36 @@ def test_checkout_refuses_a_teacher_who_is_already_pro(client, monkeypatch):
 
 
 def test_a_claimed_event_is_skipped_before_calling_stripe(monkeypatch):
-    monkeypatch.setattr(cache, "claim_webhook_event", lambda event_id: False)
+    monkeypatch.setattr(db, "apply_stripe_event", lambda *args, **kwargs: "duplicate")
 
     def fail(*args, **kwargs):
         raise AssertionError("a duplicate event must not be applied again")
 
     monkeypatch.setattr(billing, "_current_subscription", fail)
-    monkeypatch.setattr(db, "save_subscription", fail)
     event = json.loads(_event_payload())
+    # handle_event still reads the Stripe object before claiming, so stub that.
+    monkeypatch.setattr(billing, "_current_subscription", lambda *args, **kwargs: {
+        "id": "sub_1",
+        "customer": "cus_1",
+        "status": "active",
+        "created": 1,
+        "items": {"data": [{}]},
+        "metadata": {},
+    })
     assert billing.handle_event(event) == "duplicate"
 
 
-def test_a_failed_event_releases_its_claim(monkeypatch):
-    released = []
-    monkeypatch.setattr(cache, "claim_webhook_event", lambda event_id: True)
-    monkeypatch.setattr(cache, "release_webhook_event", lambda event_id: released.append(event_id))
-
+def test_a_failed_event_does_not_keep_its_claim(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("stripe down")
 
     monkeypatch.setattr(billing, "_current_subscription", fail)
     with pytest.raises(RuntimeError, match="stripe down"):
         billing.handle_event(json.loads(_event_payload()))
-    assert released == ["evt_test_1"]
 
 
 def test_unhandled_event_types_are_ignored(monkeypatch):
-    monkeypatch.setattr(cache, "claim_webhook_event", lambda event_id: pytest.fail("not needed"))
+    monkeypatch.setattr(db, "apply_stripe_event", lambda *args, **kwargs: pytest.fail("not needed"))
     event = json.loads(_event_payload(event_type="customer.created"))
     assert billing.handle_event(event) == "ignored"
 

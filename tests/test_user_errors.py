@@ -54,12 +54,6 @@ def test_connection_error_says_foundry_may_be_down():
     assert "down" in msg.lower()
 
 
-def test_process_ram_mb_is_a_whole_number():
-    mb = ai.process_ram_mb()
-    assert isinstance(mb, int)
-    assert mb >= 1
-
-
 def test_busy_is_not_a_dump():
     exc = SimpleNamespace(status_code=429)
     msg = ai.user_error_message(exc, "foundry")
@@ -77,7 +71,11 @@ def test_generate_route_hides_azure_json(monkeypatch):
         "verified": True,
     })
     monkeypatch.setattr(app_module.db, "list_worksheets_for_teacher", lambda teacher_id: [])
-    monkeypatch.setattr(app_module.billing, "is_teacher_pro", lambda teacher_id: True)
+    monkeypatch.setattr(app_module.db, "list_downloaded_versions", lambda teacher_id, limit=None: [])
+    monkeypatch.setattr(app_module.db, "list_classes_for_teacher", lambda teacher_id: [])
+    monkeypatch.setattr(app_module.billing, "has_pro_access", lambda teacher_id: True)
+    monkeypatch.setattr(app_module.billing, "is_paid_pro", lambda teacher_id: True)
+    monkeypatch.setattr(app_module.db, "active_pilot_for_teacher", lambda teacher_id: None)
 
     def boom(*_args, **_kwargs):
         raise RuntimeError(
@@ -101,3 +99,39 @@ def test_generate_route_hides_azure_json(monkeypatch):
     assert "{" not in data["error"]
     assert "nope" not in data["error"]
     assert "Foundry" in data["error"]
+
+
+def test_api_classes_lists_teacher_classes(monkeypatch):
+    import app as app_module
+
+    classrooms = [{
+        "class_id": 1,
+        "name": "1st Period ELA",
+        "school_year": "2026-2027",
+        "student_count": 2,
+    }]
+    monkeypatch.setattr(app_module.db, "find_teacher_by_id", lambda teacher_id: {
+        "teacher_id": 1,
+        "first_name": "A",
+        "last_name": "B",
+        "verified": True,
+    })
+    monkeypatch.setattr(app_module.db, "list_worksheets_for_teacher", lambda teacher_id: [])
+    monkeypatch.setattr(app_module.db, "list_downloaded_versions", lambda teacher_id, limit=None: [])
+    monkeypatch.setattr(app_module.db, "list_classes_for_teacher", lambda teacher_id: classrooms)
+    monkeypatch.setattr(app_module.billing, "has_pro_access", lambda teacher_id: True)
+    monkeypatch.setattr(app_module.billing, "is_paid_pro", lambda teacher_id: True)
+    monkeypatch.setattr(app_module.db, "active_pilot_for_teacher", lambda teacher_id: None)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["teacher_id"] = 1
+        response = client.get("/api/classes")
+        page = client.get("/worksheet")
+
+    assert response.status_code == 200
+    assert response.get_json()["classes"] == classrooms
+    html = page.get_data(as_text=True)
+    assert 'id="class-select"' in html
+    assert "Choose a class first" in html
+    assert "Choose a student" in html or "student-select" in html

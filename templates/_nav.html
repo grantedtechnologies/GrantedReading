@@ -9,7 +9,10 @@
   </a>
   <div class="topnav-right">
     {% if session.teacher_name %}
-    <div class="user-name">{{ session.teacher_name }}</div>
+    <div class="user-name">
+      {{ session.teacher_name }}
+      {% if pilot_badge %}<div class="pilot-badge">{{ pilot_badge }}</div>{% endif %}
+    </div>
     <div class="account-menu">
       <button type="button" class="avatar account-menu-btn" id="account-menu-toggle" aria-label="Account menu" aria-expanded="false" aria-haspopup="true" aria-controls="account-menu">
         {{ session.teacher_name.split()[0][0] }}{{ session.teacher_name.split()[-1][0] }}
@@ -61,7 +64,6 @@
     {% endif %}
   </div>
   {% endif %}
-  <a href="/how-reading-level-works" class="app-nav-link{% if active_page == 'how_reading_level' %} active{% endif %}">How it works</a>
 </aside>
 
 <style>
@@ -84,6 +86,12 @@
     display: block;
     height: 60px;
     width: auto;
+  }
+  .pilot-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--green-dark, #2d8a29);
+    margin-top: 2px;
   }
   nav.topnav .topnav-right {
     justify-self: end;
@@ -222,9 +230,75 @@
     z-index: 110;
   }
   .nav-backdrop.open { display: block; }
+  .idle-logout {
+    position: fixed;
+    inset: 0;
+    z-index: 400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(17, 24, 39, 0.45);
+  }
+  .idle-logout[hidden] { display: none; }
+  .idle-logout-card {
+    width: min(420px, 100%);
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px 24px 22px;
+    box-shadow: 0 16px 40px rgba(17, 24, 39, 0.18);
+    font-family: var(--font, 'Nunito', sans-serif);
+    color: var(--ink, #1a1a1a);
+  }
+  .idle-logout-card h2 {
+    margin: 0 0 8px;
+    font-size: 22px;
+    font-weight: 800;
+  }
+  .idle-logout-card p {
+    margin: 0 0 20px;
+    font-size: 16px;
+    line-height: 1.45;
+  }
+  .idle-logout-card button {
+    width: 100%;
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 16px;
+    background: var(--green, #3aaa35);
+    color: #fff;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+  }
 </style>
+{% if session.teacher_id %}
+<div class="idle-logout" id="idle-logout" hidden>
+  <div class="idle-logout-card" role="dialog" aria-modal="true" aria-labelledby="idle-logout-title">
+    <h2 id="idle-logout-title">Do you want to log out?</h2>
+    <p>You've been idle for more than 30 minutes, so this session has ended.</p>
+    <button type="button" id="idle-logout-confirm">Log out</button>
+  </div>
+</div>
+{% endif %}
 
 <script>
+  (function () {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+      const response = await originalFetch(input, init);
+      if (response.status === 401) {
+        try {
+          const data = await response.clone().json();
+          if (data && data.error === "session_expired" && !window.__idlePromptOpen) {
+            window.location.href = "/login?expired=1";
+          }
+        } catch (_) {}
+      }
+      return response;
+    };
+  })();
   (function () {
     const drawer = document.getElementById("nav-drawer");
     const backdrop = document.getElementById("nav-backdrop");
@@ -263,6 +337,53 @@
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") setAccountOpen(false);
       });
+    }
+
+    const idlePrompt = document.getElementById("idle-logout");
+    const idleConfirm = document.getElementById("idle-logout-confirm");
+    if (idlePrompt && idleConfirm) {
+      const idleMs = 30 * 60 * 1000;
+      let lastActivity = Date.now();
+      let lastPing = 0;
+      let idleTimer = null;
+      let asking = false;
+
+      function showIdlePrompt() {
+        if (asking) return;
+        asking = true;
+        window.__idlePromptOpen = true;
+        idlePrompt.hidden = false;
+        idleConfirm.focus();
+        fetch("/api/session/idle", { method: "POST" }).catch(() => {});
+      }
+      window.__showIdleLogoutPrompt = showIdlePrompt;
+
+      function scheduleIdlePrompt() {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(showIdlePrompt, idleMs);
+      }
+
+      function noteActivity() {
+        if (asking) return;
+        lastActivity = Date.now();
+        scheduleIdlePrompt();
+        if (Date.now() - lastPing < 60000) return;
+        lastPing = Date.now();
+        fetch("/api/session/activity", { method: "POST" }).catch(() => {});
+      }
+
+      ["mousemove", "keydown", "pointerdown", "click", "scroll", "touchstart", "wheel"].forEach((name) => {
+        window.addEventListener(name, noteActivity, { passive: true });
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && Date.now() - lastActivity > idleMs) {
+          showIdlePrompt();
+        }
+      });
+      idleConfirm.addEventListener("click", () => {
+        window.location.href = "/login?expired=1";
+      });
+      scheduleIdlePrompt();
     }
   })();
 </script>

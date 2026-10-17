@@ -119,6 +119,14 @@ def refresh_unverified_teacher(teacher_id, first_name, last_name, password):
     return teacher
 
 
+def set_teacher_password(teacher_id, password):
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE Teachers SET password = :password WHERE teacherid = :teacher_id"),
+            {"teacher_id": teacher_id, "password": password},
+        )
+
+
 def mark_teacher_verified(teacher_id):
     with engine.begin() as conn:
         conn.execute(
@@ -224,7 +232,7 @@ def list_students_for_teacher(teacher_id):
                   s.fname AS first_name,
                   s.lname AS last_name,
                   s.`grade-level` AS classroom_grade,
-                  s.`roading-level` AS reading_level,
+                  s.`reading-level` AS reading_level,
                   s.notes,
                   vl.vocabListid AS vocab_list_id,
                   vl.listName AS list_name,
@@ -334,7 +342,7 @@ def create_student(
             text(
                 """
                 INSERT INTO Students
-                  (classid, fname, lname, `grade-level`, `roading-level`, notes)
+                  (classid, fname, lname, `grade-level`, `reading-level`, notes)
                 VALUES
                   (:class_id, :first_name, :last_name, :classroom_grade, :reading_level, :notes)
                 """
@@ -395,7 +403,7 @@ def update_student(
                 SET fname = :first_name,
                     lname = :last_name,
                     `grade-level` = :classroom_grade,
-                    `roading-level` = :reading_level,
+                    `reading-level` = :reading_level,
                     notes = :notes
                 WHERE studentid = :student_id
                 """
@@ -589,164 +597,555 @@ def vocab_list_belongs_to_teacher(teacher_id, vocab_list_id):
     return True
 
 
-WORKSHEET_COLUMNS = """
-  w.sheetid, w.generationid, w.teacherid, w.studentid, w.vocabListid,
-  w.title, w.createdAt, w.expectedLevel, w.trueLevel,
-  w.DOKLevel AS targetDOKLevel, w.DOKMix AS dokMix, w.sheettype, w.phonics,
-  w.informational, w.interest, w.sourceurl, w.bloburl, w.feedback, w.rating, w.original,
+VERSION_COLUMNS = """
+  w.sheetid, w.teacherid, w.studentid, w.vocabListid,
+  w.title AS worksheet_title, w.createdAt, w.expectedLevel,
+  w.DOKLevel AS targetDOKLevel, w.DOKRequest AS dokRequest, w.sheettype, w.phonics,
+  w.informational, w.interest, w.sourceurl, w.original, w.studentGradeAtGeneration,
+  v.versionid, v.generationid, v.parentVersionid, v.source, v.title, v.content,
+  v.trueLevel, v.DOKMix AS dokMix, v.pdfBlobKey, v.imageBlobKey,
+  v.rating, v.feedback, v.createdAt AS versionCreatedAt, v.costUsd,
   s.fname AS student_first_name, s.lname AS student_last_name,
   c.classid AS class_id, c.name AS class_name,
   vl.listName AS vocab_list_name,
   (SELECT GROUP_CONCAT(wd.word ORDER BY wd.wordid SEPARATOR ', ')
      FROM words wd WHERE wd.vocabListid = w.vocabListid) AS vocab_words,
-  JSON_UNQUOTE(JSON_EXTRACT(w.content, '$.focus_vocabulary')) AS focus_vocabulary
+  JSON_UNQUOTE(JSON_EXTRACT(v.content, '$.focus_vocabulary')) AS focus_vocabulary
 """
 
 
-def _worksheet_row(row):
+def _json_field(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _version_row(row):
     if row is None:
         return None
     sheet = dict(row)
-    if isinstance(sheet.get("dokMix"), str):
-        sheet["dokMix"] = json.loads(sheet["dokMix"])
+    sheet["dokMix"] = _json_field(sheet.get("dokMix"))
+    sheet["dokRequest"] = _json_field(sheet.get("dokRequest"))
     sheet["original"] = bool(sheet["original"])
     sheet["informational"] = bool(sheet["informational"])
+    sheet["bloburl"] = sheet.get("pdfBlobKey")
     return sheet
 
 
-def find_worksheet(teacher_id, sheet_id):
+def _int_or_none(value):
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def _dok_level_value(record):
+    raw = record.get("targetDOKLevel")
+    if raw in (None, ""):
+        request = record.get("dokRequest")
+        if request is not None:
+            return "custom"
+        return None
+    if str(raw).strip().lower() == "custom":
+        return "custom"
+    return str(int(raw))
+
+
+def _dok_request_value(record, dok_level):
+    request = record.get("dokRequest")
+    if dok_level == "custom":
+        if request is None:
+            mix = record.get("dokMix")
+            request = mix if mix is not None else {"custom": True}
+        return json.dumps(request)
+    return None
+
+
+def find_worksheet(teacher_id, sheet_id, version_id=None):
+    if version_id is not None:
+        return find_version_for_teacher(teacher_id, version_id=version_id, sheet_id=sheet_id)
+    return find_latest_version(teacher_id, sheet_id)
+
+
+def find_worksheet_by_generation(teacher_id, generation_id):
+    return find_version_for_teacher(teacher_id, generation_id=generation_id)
+
+
+def find_version_for_teacher(teacher_id, *, generation_id=None, version_id=None, sheet_id=None):
+    clauses = ["w.teacherid = :teacher_id"]
+    params = {"teacher_id": int(teacher_id)}
+    if generation_id is not None:
+        clauses.append("v.generationid = :generation_id")
+        params["generation_id"] = generation_id
+    if version_id is not None:
+        clauses.append("v.versionid = :version_id")
+        params["version_id"] = int(version_id)
+    if sheet_id is not None:
+        clauses.append("w.sheetid = :sheet_id")
+        params["sheet_id"] = int(sheet_id)
     with engine.connect() as conn:
         row = conn.execute(
             text(
                 f"""
-                SELECT {WORKSHEET_COLUMNS}
-                FROM worksheets w
+                SELECT {VERSION_COLUMNS}
+                FROM versions v
+                JOIN worksheets w ON w.sheetid = v.sheetid
+                LEFT JOIN Students s ON s.studentid = w.studentid
+                LEFT JOIN class c ON c.classid = s.classid
+                LEFT JOIN vocabList vl ON vl.vocabListid = w.vocabListid
+                WHERE {" AND ".join(clauses)}
+                ORDER BY v.versionid DESC
+                LIMIT 1
+                """
+            ),
+            params,
+        ).mappings().first()
+    return _version_row(row)
+
+
+def find_latest_version(teacher_id, sheet_id):
+    return find_version_for_teacher(teacher_id, sheet_id=sheet_id)
+
+
+def latest_downloaded_version(teacher_id, sheet_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT {VERSION_COLUMNS}
+                FROM downloads d
+                JOIN versions v ON v.versionid = d.versionid
+                JOIN worksheets w ON w.sheetid = v.sheetid
                 LEFT JOIN Students s ON s.studentid = w.studentid
                 LEFT JOIN class c ON c.classid = s.classid
                 LEFT JOIN vocabList vl ON vl.vocabListid = w.vocabListid
                 WHERE w.sheetid = :sheet_id AND w.teacherid = :teacher_id
+                ORDER BY d.downloadedAt DESC, d.downloadid DESC
+                LIMIT 1
                 """
             ),
-            {"sheet_id": sheet_id, "teacher_id": teacher_id},
+            {"sheet_id": int(sheet_id), "teacher_id": int(teacher_id)},
         ).mappings().first()
-    return _worksheet_row(row)
+    return _version_row(row)
 
 
-def find_worksheet_by_generation(teacher_id, generation_id):
-    with engine.connect() as conn:
-        row = conn.execute(
-            text(
-                f"""
-                SELECT {WORKSHEET_COLUMNS}
-                FROM worksheets w
-                LEFT JOIN Students s ON s.studentid = w.studentid
-                LEFT JOIN class c ON c.classid = s.classid
-                LEFT JOIN vocabList vl ON vl.vocabListid = w.vocabListid
-                WHERE w.generationid = :generation_id AND w.teacherid = :teacher_id
-                """
-            ),
-            {"generation_id": generation_id, "teacher_id": teacher_id},
-        ).mappings().first()
-    return _worksheet_row(row)
-
-
-def list_worksheets_for_teacher(teacher_id):
+def list_downloaded_versions(teacher_id, limit=None):
+    limit_sql = "LIMIT :limit" if limit is not None else ""
+    params = {"teacher_id": int(teacher_id)}
+    if limit is not None:
+        params["limit"] = int(limit)
     with engine.connect() as conn:
         rows = conn.execute(
             text(
                 f"""
-                SELECT {WORKSHEET_COLUMNS}
-                FROM worksheets w
+                SELECT {VERSION_COLUMNS},
+                       counts.download_count,
+                       counts.last_downloaded
+                FROM (
+                  SELECT versionid,
+                         COUNT(*) AS download_count,
+                         MAX(downloadedAt) AS last_downloaded
+                  FROM downloads
+                  GROUP BY versionid
+                ) counts
+                JOIN versions v ON v.versionid = counts.versionid
+                JOIN worksheets w ON w.sheetid = v.sheetid
                 LEFT JOIN Students s ON s.studentid = w.studentid
                 LEFT JOIN class c ON c.classid = s.classid
                 LEFT JOIN vocabList vl ON vl.vocabListid = w.vocabListid
                 WHERE w.teacherid = :teacher_id
-                ORDER BY w.createdAt DESC, w.sheetid DESC
+                ORDER BY counts.last_downloaded DESC, v.versionid DESC
+                {limit_sql}
                 """
             ),
-            {"teacher_id": teacher_id},
+            params,
         ).mappings().all()
-    return [_worksheet_row(row) for row in rows]
+    items = []
+    for row in rows:
+        item = _version_row(row)
+        item["download_count"] = int(row["download_count"])
+        item["last_downloaded"] = row["last_downloaded"]
+        items.append(item)
+    return items
 
 
-def insert_worksheet(teacher_id, generation_id, record, store_pdf):
-    """Insert the row, then call `store_pdf(sheet_id)` for the blob key.
+def list_worksheets_for_teacher(teacher_id):
+    return list_downloaded_versions(teacher_id)
 
-    Both happen in one transaction, so a failed upload leaves no row.
-    A second insert for the same generation raises IntegrityError on the
-    generationid unique key.
+
+def insert_worksheet(teacher_id, generation_id, record, store_pdf=None):
+    """Insert a worksheet and version, or a new version of an existing sheet.
+
+    `store_pdf(sheet_id, generation_id)` may upload blobs and return
+    (pdf_key, image_key). Keys stay NULL when that callback is omitted.
+    A second insert for the same generationid raises IntegrityError.
     """
-    dok_mix = record.get("dokMix")
     with engine.begin() as conn:
+        sheet_id, version_id = _insert_worksheet_and_version(
+            conn, teacher_id, generation_id, record
+        )
+        if store_pdf is not None:
+            keys = store_pdf(sheet_id, generation_id)
+            if keys:
+                pdf_key, image_key = keys
+                conn.execute(
+                    text(
+                        """
+                        UPDATE versions
+                        SET pdfBlobKey = :pdf_key, imageBlobKey = :image_key
+                        WHERE versionid = :version_id
+                        """
+                    ),
+                    {
+                        "pdf_key": pdf_key,
+                        "image_key": image_key,
+                        "version_id": version_id,
+                    },
+                )
+                conn.execute(
+                    text("UPDATE worksheets SET title = :title WHERE sheetid = :sheet_id"),
+                    {"title": record["title"][:255], "sheet_id": sheet_id},
+                )
+    return find_version_for_teacher(teacher_id, generation_id=generation_id)
+
+
+def _insert_worksheet_and_version(conn, teacher_id, generation_id, record):
+    parent_id = _int_or_none(record.get("parentVersionid"))
+    sheet_id = _int_or_none(record.get("sheetid"))
+    source = record.get("source") or ("edit" if parent_id or sheet_id else "initial")
+    if sheet_id is None and parent_id is not None:
+        parent = conn.execute(
+            text("SELECT sheetid FROM versions WHERE versionid = :parent_id"),
+            {"parent_id": parent_id},
+        ).mappings().first()
+        if parent is None:
+            raise ValueError("That version is not on your account.")
+        sheet_id = int(parent["sheetid"])
+    if sheet_id is None:
+        dok_level = _dok_level_value(record)
         result = conn.execute(
             text(
                 """
                 INSERT INTO worksheets
-                  (generationid, teacherid, studentid, vocabListid, title, createdAt,
-                   expectedLevel, trueLevel, DOKLevel, DOKMix, sheettype, phonics, content,
-                   informational, interest, sourceurl, bloburl, feedback, rating, original)
+                  (teacherid, studentid, vocabListid, title, createdAt,
+                   expectedLevel, DOKLevel, DOKRequest, sheettype, phonics,
+                   informational, interest, sourceurl, original, studentGradeAtGeneration)
                 VALUES
-                  (:generation_id, :teacher_id, :student_id, :vocab_list_id, :title, UTC_TIMESTAMP(),
-                   :expected_level, :true_level, :target_dok, :dok_mix, :sheettype, :phonics, :content,
-                   :informational, :interest, :sourceurl, '', NULL, NULL, :original)
+                  (:teacher_id, :student_id, :vocab_list_id, :title, UTC_TIMESTAMP(),
+                   :expected_level, :dok_level, :dok_request, :sheettype, :phonics,
+                   :informational, :interest, :sourceurl, :original, :student_grade)
                 """
             ),
             {
-                "generation_id": generation_id,
-                "teacher_id": teacher_id,
-                "student_id": record.get("studentid"),
-                "vocab_list_id": record.get("vocabListid"),
+                "teacher_id": int(teacher_id),
+                "student_id": _int_or_none(record.get("studentid")),
+                "vocab_list_id": _int_or_none(record.get("vocabListid")),
                 "title": record["title"],
-                "expected_level": record["expectedLevel"],
-                "true_level": record["trueLevel"],
-                "target_dok": record.get("targetDOKLevel"),
-                "dok_mix": json.dumps(dok_mix) if dok_mix is not None else None,
+                "expected_level": int(record["expectedLevel"]),
+                "dok_level": dok_level,
+                "dok_request": _dok_request_value(record, dok_level),
                 "sheettype": record["sheettype"],
                 "phonics": (record.get("phonics") or None),
-                "content": record.get("content"),
                 "informational": 1 if record.get("informational") else 0,
                 "interest": record.get("interest") or "",
                 "sourceurl": record.get("sourceurl"),
                 "original": 1 if record["original"] else 0,
+                "student_grade": _int_or_none(record.get("studentGradeAtGeneration")),
             },
         )
         sheet_id = result.lastrowid
-        key = store_pdf(sheet_id)
-        conn.execute(
-            text("UPDATE worksheets SET bloburl = :key WHERE sheetid = :sheet_id"),
-            {"key": key, "sheet_id": sheet_id},
-        )
-    return find_worksheet(teacher_id, sheet_id)
+    dok_mix = record.get("dokMix")
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO versions
+              (generationid, sheetid, parentVersionid, source, title, content,
+               trueLevel, DOKMix, pdfBlobKey, imageBlobKey, costUsd)
+            VALUES
+              (:generation_id, :sheet_id, :parent_id, :source, :title, :content,
+               :true_level, :dok_mix, NULL, NULL, :cost_usd)
+            """
+        ),
+        {
+            "generation_id": generation_id,
+            "sheet_id": int(sheet_id),
+            "parent_id": parent_id,
+            "source": source,
+            "title": record["title"],
+            "content": record.get("content") or "{}",
+            "true_level": int(record["trueLevel"]),
+            "dok_mix": json.dumps(dok_mix) if dok_mix is not None else None,
+            "cost_usd": record.get("costUsd"),
+        },
+    )
+    return int(sheet_id), int(result.lastrowid)
 
 
-def update_worksheet_feedback(teacher_id, sheet_id, feedback, rating):
+def set_version_blob_keys(teacher_id, generation_id, pdf_key, image_key=None, title=None):
     with engine.begin() as conn:
         result = conn.execute(
             text(
                 """
-                UPDATE worksheets
-                SET feedback = :feedback, rating = :rating
-                WHERE sheetid = :sheet_id AND teacherid = :teacher_id
+                UPDATE versions v
+                JOIN worksheets w ON w.sheetid = v.sheetid
+                SET v.pdfBlobKey = :pdf_key, v.imageBlobKey = :image_key
+                WHERE v.generationid = :generation_id AND w.teacherid = :teacher_id
                 """
             ),
             {
-                "sheet_id": sheet_id,
-                "teacher_id": teacher_id,
+                "pdf_key": pdf_key,
+                "image_key": image_key,
+                "generation_id": generation_id,
+                "teacher_id": int(teacher_id),
+            },
+        )
+        if title and result.rowcount > 0:
+            conn.execute(
+                text(
+                    """
+                    UPDATE worksheets w
+                    JOIN versions v ON v.sheetid = w.sheetid
+                    SET w.title = :title
+                    WHERE v.generationid = :generation_id AND w.teacherid = :teacher_id
+                    """
+                ),
+                {
+                    "title": title[:255],
+                    "generation_id": generation_id,
+                    "teacher_id": int(teacher_id),
+                },
+            )
+        return result.rowcount > 0
+
+
+def insert_download(version_id, fmt="pdf"):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO downloads (versionid, downloadedAt, format)
+                VALUES (:version_id, UTC_TIMESTAMP(3), :fmt)
+                """
+            ),
+            {"version_id": int(version_id), "fmt": fmt},
+        )
+
+
+def update_version_feedback(teacher_id, version_id, feedback, rating):
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                UPDATE versions v
+                JOIN worksheets w ON w.sheetid = v.sheetid
+                SET v.feedback = :feedback, v.rating = :rating
+                WHERE v.versionid = :version_id AND w.teacherid = :teacher_id
+                """
+            ),
+            {
+                "version_id": int(version_id),
+                "teacher_id": int(teacher_id),
                 "feedback": feedback,
                 "rating": rating,
             },
         )
-        if result.rowcount == 0 and not conn.execute(
-            text(
-                "SELECT 1 FROM worksheets WHERE sheetid = :sheet_id AND teacherid = :teacher_id"
-            ),
-            {"sheet_id": sheet_id, "teacher_id": teacher_id},
-        ).first():
+        if result.rowcount == 0:
             return None
-    return find_worksheet(teacher_id, sheet_id)
+    return find_version_for_teacher(teacher_id, version_id=version_id)
+
+
+def update_worksheet_feedback(teacher_id, sheet_id, feedback, rating, version_id=None):
+    if version_id is None:
+        latest = latest_downloaded_version(teacher_id, sheet_id) or find_latest_version(
+            teacher_id, sheet_id
+        )
+        if latest is None:
+            return None
+        version_id = latest["versionid"]
+    return update_version_feedback(teacher_id, version_id, feedback, rating)
+
+
+def paid_pro_exists(teacher_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM subscriptions
+                WHERE teacherid = :teacher_id
+                  AND stripeSubscriptionId IS NOT NULL
+                  AND status IN ('active', 'trialing')
+                LIMIT 1
+                """
+            ),
+            {"teacher_id": int(teacher_id)},
+        ).first()
+        return row is not None
+
+
+def active_pilot_exists(teacher_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM subscriptions s
+                JOIN Pilot p ON p.pilotid = s.pilotid
+                WHERE s.teacherid = :teacher_id
+                  AND s.pilotid IS NOT NULL
+                  AND UTC_TIMESTAMP() BETWEEN p.startTime AND p.endTime
+                LIMIT 1
+                """
+            ),
+            {"teacher_id": int(teacher_id)},
+        ).first()
+        return row is not None
+
+
+def active_pilot_for_teacher(teacher_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT p.pilotid, p.name, p.school, p.code, p.startTime, p.endTime
+                FROM subscriptions s
+                JOIN Pilot p ON p.pilotid = s.pilotid
+                WHERE s.teacherid = :teacher_id
+                  AND s.pilotid IS NOT NULL
+                  AND UTC_TIMESTAMP() BETWEEN p.startTime AND p.endTime
+                ORDER BY p.endTime DESC, p.pilotid DESC
+                LIMIT 1
+                """
+            ),
+            {"teacher_id": int(teacher_id)},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def find_pilot_by_code(code):
+    cleaned = (code or "").strip()
+    if not cleaned:
+        return None
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT pilotid, name, school, code, startTime, endTime
+                FROM Pilot
+                WHERE LOWER(code) = LOWER(:code)
+                LIMIT 1
+                """
+            ),
+            {"code": cleaned},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def join_pilot(teacher_id, pilot):
+    """Attach a teacher to a pilot. Rejoining the same pilot is a no-op."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO subscriptions
+                  (teacherid, pilotid, stripeCustomerId, stripeSubscriptionId, priceId,
+                   price, status, currentPeriodEnd, createdAt, canceledAt)
+                VALUES
+                  (:teacher_id, :pilot_id, NULL, NULL, NULL,
+                   0, 'active', NULL, UTC_TIMESTAMP(), NULL) AS new
+                ON DUPLICATE KEY UPDATE
+                  status = 'active'
+                """
+            ),
+            {"teacher_id": int(teacher_id), "pilot_id": int(pilot["pilotid"])},
+        )
+
+
+def create_teacher_with_pilot(first_name, last_name, email, password, pilot):
+    """Create the teacher and the pilot subscription in one transaction."""
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    """
+                    INSERT INTO Teachers (fname, lname, email, password, verified)
+                    VALUES (:first_name, :last_name, :email, :password, 0)
+                    """
+                ),
+                {
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "email": email,
+                    "password": password,
+                },
+            )
+            teacher_id = result.lastrowid
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO subscriptions
+                      (teacherid, pilotid, stripeCustomerId, stripeSubscriptionId, priceId,
+                       price, status, currentPeriodEnd, createdAt, canceledAt)
+                    VALUES
+                      (:teacher_id, :pilot_id, NULL, NULL, NULL,
+                       0, 'active', NULL, UTC_TIMESTAMP(), NULL)
+                    """
+                ),
+                {"teacher_id": int(teacher_id), "pilot_id": int(pilot["pilotid"])},
+            )
+    except IntegrityError as exc:
+        raise ValueError("That email is already in use.") from exc
+    return {
+        "teacher_id": teacher_id,
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "verified": 0,
+    }
+
+
+def refresh_unverified_teacher_with_pilot(teacher_id, first_name, last_name, password, pilot):
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                UPDATE Teachers
+                SET fname = :first_name, lname = :last_name, password = :password
+                WHERE teacherid = :teacher_id AND verified = 0
+                """
+            ),
+            {
+                "teacher_id": int(teacher_id),
+                "first_name": first_name,
+                "last_name": last_name,
+                "password": password,
+            },
+        )
+        if result.rowcount == 0:
+            raise ValueError("That email is already in use.")
+        conn.execute(
+            text(
+                """
+                INSERT INTO subscriptions
+                  (teacherid, pilotid, stripeCustomerId, stripeSubscriptionId, priceId,
+                   price, status, currentPeriodEnd, createdAt, canceledAt)
+                VALUES
+                  (:teacher_id, :pilot_id, NULL, NULL, NULL,
+                   0, 'active', NULL, UTC_TIMESTAMP(), NULL) AS new
+                ON DUPLICATE KEY UPDATE
+                  status = 'active'
+                """
+            ),
+            {"teacher_id": int(teacher_id), "pilot_id": int(pilot["pilotid"])},
+        )
+    teacher = find_teacher_by_id(teacher_id)
+    if teacher is None:
+        raise ValueError("That email is already in use.")
+    teacher["password"] = password
+    return teacher
 
 
 def latest_subscription(teacher_id):
+    """Latest Stripe-backed row, for the portal. Pilot rows are skipped."""
     with engine.connect() as conn:
         row = conn.execute(
             text(
@@ -754,28 +1153,46 @@ def latest_subscription(teacher_id):
                 SELECT subid, teacherid AS teacher_id,
                        stripeCustomerId AS stripe_customer_id,
                        stripeSubscriptionId AS stripe_subscription_id,
-                       price, status,
+                       priceId AS price_id, price, status,
                        currentPeriodEnd AS current_period_end,
                        createdAt AS created_at, canceledAt AS canceled_at
                 FROM subscriptions
                 WHERE teacherid = :teacher_id
+                  AND stripeSubscriptionId IS NOT NULL
                 ORDER BY createdAt DESC, subid DESC
                 LIMIT 1
                 """
             ),
-            {"teacher_id": teacher_id},
+            {"teacher_id": int(teacher_id)},
         ).mappings().first()
         return dict(row) if row else None
 
 
 def save_subscription(subscription):
-    """Insert or update one subscription. Returns "saved" or "no_row".
-
-    Duplicate deliveries are stopped in Redis before this runs. The unique key
-    on stripeSubscriptionId still makes a second write of the same subscription
-    an update rather than a second row.
-    """
+    """Insert or update one Stripe subscription. Returns "saved" or "no_row"."""
     with engine.begin() as conn:
+        return "saved" if _write_subscription(conn, subscription) else "no_row"
+
+
+def claim_webhook_event(conn, event_id, event_type):
+    """Insert the event id. Returns True the first time, False on a replay."""
+    result = conn.execute(
+        text(
+            """
+            INSERT IGNORE INTO processed_webhook_events (eventId, eventType, processedAt)
+            VALUES (:event_id, :event_type, UTC_TIMESTAMP())
+            """
+        ),
+        {"event_id": event_id, "event_type": event_type},
+    )
+    return result.rowcount > 0
+
+
+def apply_stripe_event(event_id, event_type, subscription):
+    """Claim the webhook event and upsert the Stripe row in one transaction."""
+    with engine.begin() as conn:
+        if not claim_webhook_event(conn, event_id, event_type):
+            return "duplicate"
         return "saved" if _write_subscription(conn, subscription) else "no_row"
 
 
@@ -784,6 +1201,7 @@ def _write_subscription(conn, subscription):
         "teacher_id": subscription.get("teacher_id"),
         "customer_id": subscription["customer_id"],
         "subscription_id": subscription["subscription_id"],
+        "price_id": subscription.get("price_id"),
         "price": subscription["price"],
         "status": subscription["status"],
         "current_period_end": subscription.get("current_period_end"),
@@ -799,13 +1217,14 @@ def _write_subscription(conn, subscription):
             text(
                 """
                 INSERT INTO subscriptions
-                  (teacherid, stripeCustomerId, stripeSubscriptionId, price, status,
-                   currentPeriodEnd, createdAt, canceledAt)
+                  (teacherid, pilotid, stripeCustomerId, stripeSubscriptionId, priceId,
+                   price, status, currentPeriodEnd, createdAt, canceledAt)
                 VALUES
-                  (:teacher_id, :customer_id, :subscription_id, :price, :status,
-                   :current_period_end, :created_at, :canceled_at) AS new
+                  (:teacher_id, NULL, :customer_id, :subscription_id, :price_id,
+                   :price, :status, :current_period_end, :created_at, :canceled_at) AS new
                 ON DUPLICATE KEY UPDATE
                   stripeCustomerId = new.stripeCustomerId,
+                  priceId = new.priceId,
                   price = new.price,
                   status = new.status,
                   currentPeriodEnd = new.currentPeriodEnd,
@@ -815,18 +1234,60 @@ def _write_subscription(conn, subscription):
             params,
         )
         return True
-    # Subscription events only name a teacher when Checkout set the metadata.
-    # Without one, only a row that checkout.session.completed already made
-    # can be updated.
     result = conn.execute(
         text(
             """
             UPDATE subscriptions
-            SET stripeCustomerId = :customer_id, price = :price, status = :status,
-                currentPeriodEnd = :current_period_end, canceledAt = :canceled_at
+            SET stripeCustomerId = :customer_id, priceId = :price_id, price = :price,
+                status = :status, currentPeriodEnd = :current_period_end,
+                canceledAt = :canceled_at
             WHERE stripeSubscriptionId = :subscription_id
+              AND pilotid IS NULL
             """
         ),
         params,
     )
     return result.rowcount > 0
+
+
+def create_login_session(session_id, teacher_id, device_type, browser, os_name, app_version):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO sessions
+                  (sessionid, teacherid, startedAt, endedAt, deviceType, browser, os, appVersion)
+                VALUES
+                  (:session_id, :teacher_id, UTC_TIMESTAMP(), UTC_TIMESTAMP(),
+                   :device_type, :browser, :os_name, :app_version)
+                """
+            ),
+            {
+                "session_id": session_id,
+                "teacher_id": int(teacher_id),
+                "device_type": device_type,
+                "browser": browser,
+                "os_name": os_name,
+                "app_version": app_version,
+            },
+        )
+
+
+def touch_login_session(session_id):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE sessions
+                SET endedAt = UTC_TIMESTAMP()
+                WHERE sessionid = :session_id
+                """
+            ),
+            {"session_id": session_id},
+        )
+
+
+def end_login_session(session_id):
+    if not session_id:
+        return
+    touch_login_session(session_id)

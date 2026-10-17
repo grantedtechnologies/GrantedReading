@@ -1,8 +1,8 @@
-"""Load granted.sql into an existing MySQL database.
+"""Load granted.sql and seed_dev.sql into an existing MySQL database.
 
 Railway will not allow DROP DATABASE or CREATE DATABASE, so those statements
 and USE are skipped. Tables are created in whatever database the connection
-already selected.
+already selected, then seed_dev.sql is loaded into those tables.
 
 From your laptop, put the public proxy URL in .env as MYSQL_PUBLIC_URL, then:
 
@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA_PATH = os.path.join(ROOT, "granted.sql")
+SEED_PATH = os.path.join(ROOT, "seed_dev.sql")
 
 
 def _env(*names, default=""):
@@ -58,10 +59,10 @@ def _connection():
     )
 
 
-def _statements():
+def _statements(path):
     statements = []
     chunk = []
-    with open(SCHEMA_PATH, encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         for line in handle:
             if line.strip().startswith("--"):
                 continue
@@ -85,6 +86,13 @@ def _statements():
     return kept
 
 
+def _run(cursor, path):
+    statements = _statements(path)
+    for statement in statements:
+        cursor.execute(statement)
+    return len(statements)
+
+
 def main():
     connection = _connection()
     try:
@@ -94,13 +102,13 @@ def main():
             if not database:
                 print("The connection has no database selected. Set MYSQL_DATABASE or MYSQL_PUBLIC_URL.")
                 return 1
-            for statement in _statements():
-                cursor.execute(statement)
+            schema_count = _run(cursor, SCHEMA_PATH)
+            seed_count = _run(cursor, SEED_PATH)
             cursor.execute("SHOW TABLES")
             tables = [row[0] for row in cursor.fetchall()]
     finally:
         connection.close()
-    print(f"Loaded granted.sql into {database}.")
+    print(f"Loaded granted.sql ({schema_count} statements) and seed_dev.sql ({seed_count} statements) into {database}.")
     print("Tables:", ", ".join(tables) or "(none)")
     return 0
 

@@ -79,8 +79,8 @@ def mark_worksheet_used(teacher_id):
     )
 
 
-def stash_pending_worksheet(teacher_id, pdf_bytes, record):
-    generation_id = uuid.uuid4().hex
+def stash_pending_worksheet(teacher_id, pdf_bytes, record, generation_id=None):
+    generation_id = generation_id or uuid.uuid4().hex
     payload = {
         "teacher_id": teacher_id,
         "pdf_base64": base64.b64encode(pdf_bytes).decode(),

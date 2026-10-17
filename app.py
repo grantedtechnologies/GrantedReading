@@ -5,19 +5,24 @@ import logging
 import os
 import re
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session
 from itsdangerous import URLSafeTimedSerializer
 from sqlalchemy.exc import IntegrityError
+from user_agents import parse as parse_user_agent
 import requests
 import stripe
+from requests.exceptions import Timeout as RequestsTimeout
 
 import ai
 import billing
 import blobStorage
 import cache
 import db
+import events
 import file
 from reading_level import ReadingLevelError
 
@@ -26,6 +31,8 @@ ai.require_foundry_config()
 
 CONFIRM_SALT = "email-confirm"
 CONFIRM_MAX_AGE = 24 * 60 * 60
+RESET_SALT = "password-reset"
+RESET_MAX_AGE = 60 * 60
 EMAIL_SEND_FAILED = (
     "We could not send the confirmation email. Your account is not verified yet, "
     "so you can try again."
@@ -55,7 +62,7 @@ def _mail_sender():
     return ("Granted Reading", "noreply@grantedreading.test")
 
 
-def _send_mailtrap(subject, text, to_email):
+def _send_mailtrap(subject, text, to_email, category="email_verification"):
     """Send via Mailtrap's HTTPS API. Raises on network or API failure."""
     token = app.config.get("MAIL_PASSWORD") or ""
     if not token:
@@ -72,7 +79,7 @@ def _send_mailtrap(subject, text, to_email):
             "to": [{"email": to_email}],
             "subject": subject,
             "text": text,
-            "category": "email_verification",
+            "category": category,
         },
         timeout=MAIL_SEND_TIMEOUT,
     )
@@ -82,11 +89,19 @@ def _send_mailtrap(subject, text, to_email):
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "granted-dev-secret")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"):
+    app.config["SESSION_COOKIE_SECURE"] = True
 app.config["MAIL_PASSWORD"] = _env_text("MAIL_PASSWORD")
 app.config["MAIL_DEFAULT_SENDER"] = _env_text(
     "MAIL_DEFAULT_SENDER",
     "Granted Reading <noreply@grantedreading.test>",
 )
+APP_VERSION = _env_text("APP_VERSION", "dev")
+SESSION_TOUCH_SECONDS = 60
+IDLE_TIMEOUT_SECONDS = 30 * 60
 
 
 def generate_confirmation_token(email):
@@ -98,6 +113,19 @@ def confirm_token(token, max_age=CONFIRM_MAX_AGE):
     serializer = URLSafeTimedSerializer(app.secret_key)
     try:
         return serializer.loads(token, salt=CONFIRM_SALT, max_age=max_age)
+    except Exception:
+        return None
+
+
+def generate_reset_token(email):
+    serializer = URLSafeTimedSerializer(app.secret_key)
+    return serializer.dumps(email, salt=RESET_SALT)
+
+
+def read_reset_token(token, max_age=RESET_MAX_AGE):
+    serializer = URLSafeTimedSerializer(app.secret_key)
+    try:
+        return serializer.loads(token, salt=RESET_SALT, max_age=max_age)
     except Exception:
         return None
 
@@ -211,8 +239,54 @@ def _wait_for_saved_sheet(teacher_id, generation_id):
     return None
 
 
+def _pdf_from_version_content(content):
+    data = json.loads(content) if isinstance(content, str) else (content or {})
+    title = data.get("title") or "Worksheet"
+    if data.get("blocks"):
+        return file.generate_blocks_pdf(title, data["blocks"])
+    model = {
+        "title": title,
+        "story": data.get("story") or "",
+        "questions": data.get("questions") or {},
+    }
+    if not model["story"] and not model["questions"]:
+        raise LookupError("empty content")
+    return file.generate_worksheet_pdf(ai.normalize_model_output(model))
+
+
+def _load_version_pdf(teacher_id, sheet, pending_bytes=None):
+    """Return PDF bytes for a saved version. Uploads missing blobs."""
+    if pending_bytes is not None:
+        pdf_bytes = pending_bytes
+    else:
+        pdf_bytes = None
+        if sheet.get("pdfBlobKey"):
+            try:
+                return blobStorage.download_pdf(sheet["pdfBlobKey"])
+            except Exception:
+                pdf_bytes = None
+        if pdf_bytes is None:
+            pdf_bytes = _pdf_from_version_content(sheet.get("content"))
+    key = blobStorage.worksheet_key(teacher_id, sheet["sheetid"], sheet["generationid"])
+    try:
+        blobStorage.upload_pdf(key, pdf_bytes)
+        db.set_version_blob_keys(
+            teacher_id,
+            sheet["generationid"],
+            key,
+            title=sheet.get("title") or sheet.get("worksheet_title"),
+        )
+    except Exception:
+        app.logger.exception("Could not store PDF for generation %s", sheet["generationid"])
+    return pdf_bytes
+
+
 def _save_generation(teacher_id, generation_id):
-    """Return (sheet, pdf_bytes), creating the row and blob only once.
+    """Return (sheet, pdf_bytes) for a persisted version and upload the blob.
+
+    Versions are written on generate, edit, and image regen. Download only
+    stores the PDF and records the download. Redis-only leftovers still
+    insert here so an interrupted persist can finish.
 
     Raises LookupError when the generation is unknown, expired, or belongs
     to another teacher.
@@ -222,50 +296,46 @@ def _save_generation(teacher_id, generation_id):
         pending = None
 
     existing = db.find_worksheet_by_generation(teacher_id, generation_id)
-    if existing is not None:
-        if pending is not None:
-            return existing, pending["pdf_bytes"]
-        return existing, blobStorage.download_pdf(existing["bloburl"])
-    if pending is None:
+    if existing is None and pending is not None:
+        if not cache.acquire_save_lock(generation_id):
+            existing = _wait_for_saved_sheet(teacher_id, generation_id)
+            if existing is None:
+                raise RuntimeError("Another save for this worksheet did not finish.")
+        else:
+            try:
+                existing = db.find_worksheet_by_generation(teacher_id, generation_id)
+                if existing is None:
+                    inserted = False
+                    try:
+                        existing = db.insert_worksheet(
+                            teacher_id, generation_id, pending["record"]
+                        )
+                        inserted = True
+                    except IntegrityError:
+                        existing = db.find_worksheet_by_generation(
+                            teacher_id, generation_id
+                        )
+                        if existing is None:
+                            raise
+                    source = (pending["record"].get("source") or "initial")
+                    if inserted and existing is not None and source == "initial":
+                        events.log_event(
+                            events.WORKSHEET_GENERATED,
+                            teacher_id=teacher_id,
+                            entity="worksheet",
+                            entity_id=existing["sheetid"],
+                            success=True,
+                            status_code=200,
+                        )
+            finally:
+                cache.release_save_lock(generation_id)
+
+    if existing is None:
         raise LookupError(generation_id)
 
-    pdf_bytes = pending["pdf_bytes"]
-    if not cache.acquire_save_lock(generation_id):
-        sheet = _wait_for_saved_sheet(teacher_id, generation_id)
-        if sheet is None:
-            raise RuntimeError("Another save for this worksheet did not finish.")
-        return sheet, pdf_bytes
-
-    uploaded = []
-
-    def store_pdf(sheet_id):
-        key = blobStorage.worksheet_key(teacher_id, sheet_id)
-        blobStorage.upload_pdf(key, pdf_bytes)
-        uploaded.append(key)
-        return key
-
-    try:
-        existing = db.find_worksheet_by_generation(teacher_id, generation_id)
-        if existing is not None:
-            return existing, pdf_bytes
-        try:
-            sheet = db.insert_worksheet(
-                teacher_id, generation_id, pending["record"], store_pdf
-            )
-        except IntegrityError:
-            sheet = db.find_worksheet_by_generation(teacher_id, generation_id)
-            if sheet is None:
-                raise
-        return sheet, pdf_bytes
-    except Exception:
-        for key in uploaded:
-            try:
-                blobStorage.delete_pdf(key)
-            except Exception:
-                app.logger.exception("Could not remove orphaned blob %s", key)
-        raise
-    finally:
-        cache.release_save_lock(generation_id)
+    return existing, _load_version_pdf(
+        teacher_id, existing, pending["pdf_bytes"] if pending else None
+    )
 
 
 def _dok_label(sheet):
@@ -300,10 +370,17 @@ def _history_item(sheet):
     student = " ".join(
         part for part in (sheet.get("student_first_name"), sheet.get("student_last_name")) if part
     )
+    last_downloaded = sheet.get("last_downloaded")
+    created = sheet.get("versionCreatedAt") or sheet.get("createdAt")
     return {
         "sheetid": sheet["sheetid"],
-        "title": sheet["title"],
-        "created_at": sheet["createdAt"].isoformat() + "Z",
+        "versionid": sheet.get("versionid"),
+        "generation_id": sheet.get("generationid"),
+        "title": sheet.get("title") or sheet.get("worksheet_title"),
+        "worksheet_title": sheet.get("worksheet_title") or sheet.get("title"),
+        "created_at": created.isoformat() + "Z" if created else "",
+        "last_downloaded": last_downloaded.isoformat() + "Z" if last_downloaded else "",
+        "download_count": int(sheet.get("download_count") or 0),
         "expected_level": _level_label(sheet["expectedLevel"]),
         "true_level": _level_label(sheet["trueLevel"]),
         "sheettype": sheet["sheettype"],
@@ -319,14 +396,58 @@ def _history_item(sheet):
         "vocab": _worksheet_vocab(sheet),
         "feedback": sheet["feedback"] or "",
         "rating": sheet["rating"],
+        "source": sheet.get("source") or "",
     }
+
+
+def _client_device():
+    agent = parse_user_agent(request.headers.get("User-Agent") or "")
+    if agent.is_bot:
+        device = "bot"
+    elif agent.is_tablet:
+        device = "tablet"
+    elif agent.is_mobile:
+        device = "mobile"
+    elif agent.is_pc:
+        device = "desktop"
+    else:
+        device = "unknown"
+    browser = (agent.browser.family or "")[:64] or None
+    os_name = (agent.os.family or "")[:64] or None
+    return device, browser, os_name
+
+
+def _start_login_session(teacher):
+    session.permanent = True
+    session["teacher_id"] = teacher["teacher_id"]
+    session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
+    session_id = str(uuid.uuid4())
+    session["login_session_id"] = session_id
+    session["last_touch"] = time.time()
+    session["last_activity"] = time.time()
+    device, browser, os_name = _client_device()
+    db.create_login_session(
+        session_id, teacher["teacher_id"], device, browser, os_name, APP_VERSION
+    )
+
+
+def _touch_login_session():
+    session_id = session.get("login_session_id")
+    if not session_id:
+        return
+    last = session.get("last_touch") or 0
+    if time.time() - last < SESSION_TOUCH_SECONDS:
+        return
+    session["last_touch"] = time.time()
+    try:
+        db.touch_login_session(session_id)
+    except Exception:
+        app.logger.exception("Could not touch session %s", session_id)
 
 
 def _teacher_session(teacher):
     session["teacher_id"] = teacher["teacher_id"]
     session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
-    # Pro is the latest subscription row, not a column on Teachers.
-    session["membership"] = "pro" if billing.is_teacher_pro(teacher["teacher_id"]) else "standard"
 
 
 def _verified_teacher():
@@ -334,19 +455,74 @@ def _verified_teacher():
     if not teacher_id:
         return None
     teacher = db.find_teacher_by_id(teacher_id)
-    if teacher is None or not teacher.get("verified"):
+    if teacher is None:
         session.clear()
         return None
+    if not teacher.get("verified"):
+        return None
     _teacher_session(teacher)
+    _touch_login_session()
     return teacher
 
 
-def _require_teacher_id():
-    teacher = _verified_teacher()
+def _unverified_teacher():
+    teacher_id = session.get("teacher_id")
+    if not teacher_id:
+        return None
+    teacher = db.find_teacher_by_id(teacher_id)
     if teacher is None:
+        return None
+    if teacher.get("verified"):
+        return None
+    return teacher
+
+
+def _idle_expired():
+    last = session.get("last_activity")
+    if last is None:
+        return False
+    try:
+        elapsed = time.time() - float(last)
+    except (TypeError, ValueError):
+        return False
+    return elapsed > IDLE_TIMEOUT_SECONDS
+
+
+def _mark_activity():
+    session["last_activity"] = time.time()
+    session.permanent = True
+
+
+def _end_idle_session():
+    """Close an idle session. This is not an explicit logout."""
+    db.end_login_session(session.get("login_session_id"))
+    session.clear()
+
+
+def _session_expired_response():
+    if request.path.startswith("/api/") or request.endpoint in (
+        "generate",
+        "download_worksheet",
+        "update_pdf",
+    ):
+        return jsonify({"error": "session_expired"}), 401
+    return redirect("/login?expired=1")
+
+
+def _require_teacher_id():
+    if not session.get("teacher_id"):
+        return None, _session_expired_response()
+    if _idle_expired():
+        _end_idle_session()
+        return None, _session_expired_response()
+    _mark_activity()
+    if _unverified_teacher() is not None:
         return None, (jsonify({
             "error": "Confirm your email before using your account.",
         }), 403)
+    teacher = _verified_teacher()
+    if teacher is None:
+        return None, _session_expired_response()
     return teacher["teacher_id"], None
 
 
@@ -356,6 +532,7 @@ ACCOUNT_ENDPOINTS = {
     "api_account",
     "api_update_account",
     "api_students",
+    "api_classes",
     "api_create_student",
     "api_update_student",
     "api_delete_student",
@@ -371,6 +548,7 @@ ACCOUNT_ENDPOINTS = {
     "api_update_vocab_list",
     "api_delete_vocab_list",
     "generate",
+    "update_pdf",
     "download_worksheet",
     "view_worksheet",
     "worksheet_history",
@@ -395,18 +573,38 @@ def _enforce_verified_account():
         return None
     if request.endpoint in DEMO_HIDDEN_ENDPOINTS:
         abort(404)
-    teacher = _verified_teacher() if session.get("teacher_id") else None
     if request.endpoint not in ACCOUNT_ENDPOINTS:
         return None
-    if teacher is None:
+    if not session.get("teacher_id"):
+        _log_signed_out_attempt()
+        return _session_expired_response()
+    if _idle_expired():
+        _end_idle_session()
+        _log_signed_out_attempt()
+        return _session_expired_response()
+    _mark_activity()
+    if _unverified_teacher() is not None:
         if request.path.startswith("/api/") or request.endpoint in (
             "generate",
             "download_worksheet",
+            "update_pdf",
         ):
             return jsonify({
                 "error": "Confirm your email before using your account.",
             }), 403
         return redirect("/login")
+    teacher = _verified_teacher()
+    if teacher is None:
+        _log_signed_out_attempt()
+        return _session_expired_response()
+
+
+def _log_signed_out_attempt():
+    """Session expiry is not a logout. Record it only for actions that log."""
+    if request.endpoint == "generate":
+        _log_generation_failure(None, 401, "session_expired")
+    elif request.endpoint == "download_worksheet":
+        _log_download(None, success=False, status_code=401, error_message="session_expired")
 
 
 def _password_problem(password, confirm):
@@ -477,7 +675,11 @@ def api_students():
 def login_page():
     if session.get("teacher_id"):
         return redirect("/worksheet")
-    return render_template("login.html", initial_mode="signin")
+    return render_template(
+        "login.html",
+        initial_mode="signin",
+        session_expired=request.args.get("expired") == "1",
+    )
 
 
 @app.route("/login", methods=["POST"])
@@ -489,11 +691,33 @@ def login():
         return jsonify({"error": "Enter an email and password."}), 400
 
     teacher = db.find_teacher_by_email(email)
-    if teacher is None or teacher["password"] != password:
+    if teacher is None:
+        events.log_event(
+            events.LOGIN,
+            success=False,
+            status_code=401,
+            error_message="unknown_email",
+        )
+        return jsonify({"error": "That email or password is not right."}), 401
+    if teacher["password"] != password:
+        events.log_event(
+            events.LOGIN,
+            teacher_id=teacher["teacher_id"],
+            success=False,
+            status_code=401,
+            error_message="invalid_password",
+        )
         return jsonify({"error": "That email or password is not right."}), 401
 
     if not teacher.get("verified"):
         sent = _issue_verification(teacher, request.host_url)
+        events.log_event(
+            events.LOGIN,
+            teacher_id=teacher["teacher_id"],
+            success=False,
+            status_code=403 if sent else 503,
+            error_message="email_not_verified" if sent else "verification_send_failed",
+        )
         if sent:
             return jsonify({
                 "error": "Confirm your email before signing in. We sent a new link.",
@@ -506,7 +730,8 @@ def login():
             "email_sent": False,
         }), 503
 
-    _teacher_session(teacher)
+    _start_login_session(teacher)
+    events.log_event(events.LOGIN, teacher_id=teacher["teacher_id"], success=True, status_code=200)
     return jsonify({"ok": True, "redirect": "/worksheet"})
 
 
@@ -526,27 +751,39 @@ def signup():
     problem = _password_problem(password, confirm)
     if problem:
         return jsonify({"error": problem}), 400
-    plan = (body.get("membership") or "standard").strip().lower()
-    if plan not in ("standard", "pro"):
-        return jsonify({"error": "Choose Standard or Pro."}), 400
+    plan = (body.get("membership") or body.get("plan") or "standard").strip().lower()
+    if plan not in ("standard", "pro", "pilot"):
+        return jsonify({"error": "Choose Standard, Pro, or Pilot."}), 400
+    pilot, pilot_error = (None, None)
+    if plan == "pilot":
+        pilot, pilot_error = _pilot_from_code(body.get("pilot_code"))
+        if pilot_error:
+            return jsonify({"error": pilot_error, "field": "pilot_code"}), 400
+        if pilot is None:
+            return jsonify({"error": "Enter your pilot code.", "field": "pilot_code"}), 400
 
     existing = db.find_teacher_by_email(email)
     if existing and existing.get("verified"):
         return jsonify({"error": "That email is already in use. Sign in instead."}), 409
-    if existing:
-        try:
+    try:
+        if existing and pilot:
+            teacher = db.refresh_unverified_teacher_with_pilot(
+                existing["teacher_id"], first_name, last_name, password, pilot
+            )
+        elif existing:
             teacher = db.refresh_unverified_teacher(
                 existing["teacher_id"], first_name, last_name, password
             )
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 409
-    else:
-        try:
+        elif pilot:
+            teacher = db.create_teacher_with_pilot(
+                first_name, last_name, email, password, pilot
+            )
+        else:
             teacher = db.create_teacher(first_name, last_name, email, password)
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
 
-    if plan != "pro":
+    if plan != "pro" or pilot:
         sent = _issue_verification(teacher, request.host_url)
         if not sent:
             return jsonify({
@@ -677,10 +914,81 @@ def verify():
         return render_template("login.html", initial_mode="signin", verify_error=True)
     db.mark_teacher_verified(teacher["teacher_id"])
     teacher["verified"] = 1
-    _teacher_session(teacher)
+    _start_login_session(teacher)
     if db.list_classes_for_teacher(teacher["teacher_id"]):
         return redirect("/worksheet")
     return redirect("/setup")
+
+
+def _issue_password_reset(teacher, host_url):
+    """Send the reset link. Returns False when Mailtrap does not accept it."""
+    token = generate_reset_token(teacher["email"])
+    link = f"{host_url.rstrip('/')}/reset?token={token}"
+    greeting = teacher.get("first_name") or "there"
+    body = (
+        f"Hi {greeting},\n\n"
+        "Choose a new Granted Reading password by opening this link:\n\n"
+        f"{link}\n\n"
+        "This link expires in 1 hour.\n"
+    )
+    try:
+        _send_mailtrap(
+            "Reset your Granted Reading password",
+            body,
+            teacher["email"],
+            category="password_reset",
+        )
+    except Exception:
+        app.logger.exception("Could not send password reset email to %s", teacher["email"])
+        app.logger.info("Password reset link for %s: %s", teacher["email"], link)
+        return False
+    app.logger.info("Password reset link for %s: %s", teacher["email"], link)
+    return True
+
+
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    body = request.get_json() or {}
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "Enter your email."}), 400
+    teacher = db.find_teacher_by_email(email)
+    if teacher is None:
+        return jsonify({"ok": True, "email_sent": True})
+    sent = _issue_password_reset(teacher, request.host_url)
+    if not sent:
+        return jsonify({
+            "error": "We could not send the reset email. Try again.",
+            "email_sent": False,
+        }), 503
+    return jsonify({"ok": True, "email_sent": True})
+
+
+@app.route("/reset")
+def reset_password_page():
+    token = (request.args.get("token") or "").strip()
+    email = read_reset_token(token) if token else None
+    teacher = db.find_teacher_by_email(email) if email else None
+    if teacher is None:
+        return render_template("login.html", initial_mode="signin", reset_error=True)
+    return render_template("login.html", initial_mode="reset", reset_token=token)
+
+
+@app.route("/reset", methods=["POST"])
+def reset_password():
+    body = request.get_json() or {}
+    token = (body.get("token") or "").strip()
+    password = body.get("password") or ""
+    confirm = body.get("password_confirm") or ""
+    email = read_reset_token(token) if token else None
+    teacher = db.find_teacher_by_email(email) if email else None
+    if teacher is None:
+        return jsonify({"error": "That reset link is invalid or expired. Ask for a new one."}), 400
+    problem = _password_problem(password, confirm)
+    if problem:
+        return jsonify({"error": problem}), 400
+    db.set_teacher_password(teacher["teacher_id"], password)
+    return jsonify({"ok": True})
 
 
 @app.route("/resend-verification", methods=["POST"])
@@ -698,9 +1006,32 @@ def resend_verification():
     return jsonify({"ok": True, "needs_verification": True, "email_sent": True})
 
 
+@app.route("/api/session/activity", methods=["POST"])
+def api_session_activity():
+    """Remember real activity so an open page does not count as idle."""
+    if not session.get("teacher_id"):
+        return jsonify({"error": "session_expired"}), 401
+    if _idle_expired():
+        _end_idle_session()
+        return jsonify({"error": "session_expired"}), 401
+    _mark_activity()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/session/idle", methods=["POST"])
+def api_session_idle():
+    """End the session after 30 minutes with no activity. Not a logout event."""
+    if session.get("teacher_id"):
+        _end_idle_session()
+    return jsonify({"ok": True})
+
+
 @app.route("/logout")
 def logout():
+    teacher_id = session.get("teacher_id")
+    db.end_login_session(session.get("login_session_id"))
     session.clear()
+    events.log_event(events.LOGOUT, teacher_id=teacher_id, success=True, status_code=200)
     return redirect("/")
 
 
@@ -718,7 +1049,7 @@ def account():
         try:
             if session_id:
                 billing.record_checkout(session_id, teacher_id)
-            elif not billing.is_teacher_pro(teacher_id):
+            elif not billing.is_paid_pro(teacher_id):
                 billing.sync_teacher_from_stripe(teacher)
         except billing.BillingNotConfigured:
             app.logger.exception("Billing is not configured")
@@ -739,12 +1070,22 @@ def api_account():
         return jsonify({"error": "Sign in to continue."}), 401
     try:
         subscription = db.latest_subscription(teacher_id)
+        pilot = db.active_pilot_for_teacher(teacher_id)
         billing_state = {
-            "is_pro": billing.is_teacher_pro(teacher_id),
-            "can_manage": subscription is not None,
+            "is_pro": billing.has_pro_access(teacher_id),
+            "is_paid_pro": billing.is_paid_pro(teacher_id),
+            "can_manage": billing.is_paid_pro(teacher_id) and subscription is not None,
             "plan_name": billing.PLAN_NAME,
             "price_cents": billing.PLAN_PRICE_CENTS,
             "interval": billing.PLAN_INTERVAL,
+            "pilot": (
+                {
+                    "name": pilot["name"],
+                    "ends": pilot["endTime"].date().isoformat(),
+                }
+                if pilot
+                else None
+            ),
         }
     except Exception:
         app.logger.exception("Could not read billing status for teacher %s", teacher_id)
@@ -772,13 +1113,31 @@ def api_update_account():
     return jsonify({"ok": True, "teacher": teacher})
 
 
+@app.route("/api/account/pilot-code", methods=["POST"])
+def api_redeem_pilot():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    pilot, pilot_error = _pilot_from_code(body.get("pilot_code"))
+    if pilot_error:
+        return jsonify({"error": pilot_error}), 400
+    if pilot is None:
+        return jsonify({"error": "Enter a pilot code."}), 400
+    db.join_pilot(teacher_id, pilot)
+    return jsonify({
+        "ok": True,
+        "pilot": {"name": pilot["name"], "ends": pilot["endTime"].date().isoformat()},
+    })
+
+
 @app.route("/billing/create-checkout-session", methods=["POST"])
 def billing_create_checkout_session():
     teacher = _verified_teacher()
     if teacher is None:
         return jsonify({"error": "Confirm your email before using your account."}), 403
     try:
-        if billing.is_teacher_pro(teacher["teacher_id"]):
+        if billing.is_paid_pro(teacher["teacher_id"]):
             return jsonify({
                 "error": f"You already have {billing.PLAN_NAME}. Use Manage subscription to change it.",
             }), 409
@@ -797,9 +1156,11 @@ def billing_create_portal_session():
     teacher_id, error = _require_teacher_id()
     if error:
         return error
+    if not billing.is_paid_pro(teacher_id):
+        return jsonify({"error": "You do not have a Stripe subscription to manage yet."}), 404
     subscription = db.latest_subscription(teacher_id)
-    if subscription is None:
-        return jsonify({"error": "You do not have a subscription to manage yet."}), 404
+    if subscription is None or not subscription.get("stripe_customer_id"):
+        return jsonify({"error": "You do not have a Stripe subscription to manage yet."}), 404
     try:
         url = billing.create_portal_session(
             subscription["stripe_customer_id"],
@@ -836,6 +1197,23 @@ def stripe_webhook():
         return jsonify({"error": "Could not process event."}), 500
     app.logger.info("Stripe webhook %s (%s): %s", event["id"], event["type"], outcome)
     return jsonify({"received": True})
+
+
+def _pilot_from_code(raw):
+    code = (raw or "").strip()
+    if not code:
+        return None, None
+    pilot = db.find_pilot_by_code(code)
+    if pilot is None:
+        return None, "That pilot code does not exist."
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    start = pilot["startTime"]
+    end = pilot["endTime"]
+    if now < start:
+        return None, "This pilot code has not started yet."
+    if now > end:
+        return None, "That pilot is no longer active."
+    return pilot, None
 
 
 def _class_fields(body):
@@ -916,6 +1294,14 @@ def setup():
     )
 
 
+@app.route("/api/classes")
+def api_classes():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    return jsonify({"classes": db.list_classes_for_teacher(teacher_id)})
+
+
 @app.route("/api/classes", methods=["POST"])
 def api_create_class():
     teacher_id, error = _require_teacher_id()
@@ -924,8 +1310,34 @@ def api_create_class():
     try:
         name, subject, grade_level, school_year = _class_fields(request.get_json() or {})
     except ValueError as exc:
+        events.log_event(
+            events.CLASS_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_class",
+        )
         return jsonify({"error": str(exc)}), 400
-    classroom = db.create_class(teacher_id, name, subject, grade_level, school_year)
+    try:
+        classroom = db.create_class(teacher_id, name, subject, grade_level, school_year)
+    except Exception:
+        app.logger.exception("Could not create class for teacher %s", teacher_id)
+        events.log_event(
+            events.CLASS_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=500,
+            error_message="database_error",
+        )
+        return jsonify({"error": "Could not create that class."}), 500
+    events.log_event(
+        events.CLASS_CREATED,
+        teacher_id=teacher_id,
+        entity="class",
+        entity_id=classroom["class_id"],
+        success=True,
+        status_code=200,
+    )
     return jsonify({"ok": True, "class": classroom})
 
 
@@ -1000,6 +1412,13 @@ def api_create_student():
     try:
         class_id = int(body.get("class_id"))
     except (TypeError, ValueError):
+        events.log_event(
+            events.STUDENT_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_student",
+        )
         return jsonify({"error": "Choose a class for this student."}), 400
     try:
         first_name, last_name, classroom_grade, reading_level, notes = _student_fields(body)
@@ -1013,7 +1432,33 @@ def api_create_student():
             notes=notes,
         )
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        missing = "not on your account" in str(exc)
+        events.log_event(
+            events.STUDENT_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=404 if missing else 400,
+            error_message="not_found" if missing else "invalid_student",
+        )
+        return jsonify({"error": str(exc)}), 404 if missing else 400
+    except Exception:
+        app.logger.exception("Could not create student for teacher %s", teacher_id)
+        events.log_event(
+            events.STUDENT_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=500,
+            error_message="database_error",
+        )
+        return jsonify({"error": "Could not create that student."}), 500
+    events.log_event(
+        events.STUDENT_CREATED,
+        teacher_id=teacher_id,
+        entity="student",
+        entity_id=student["student_id"],
+        success=True,
+        status_code=200,
+    )
     return jsonify({"ok": True, "student": student})
 
 
@@ -1063,17 +1508,64 @@ def api_create_vocab_list():
     try:
         student_id = int(body.get("student_id"))
     except (TypeError, ValueError):
+        events.log_event(
+            events.VOCAB_LIST_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_vocab",
+        )
         return jsonify({"error": "Choose a student for this vocab."}), 400
     if not list_name:
+        events.log_event(
+            events.VOCAB_LIST_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_vocab",
+        )
         return jsonify({"error": "Enter a name."}), 400
     if not words:
+        events.log_event(
+            events.VOCAB_LIST_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_vocab",
+        )
         return jsonify({"error": "Add at least one word."}), 400
     try:
         vocab_list = db.create_vocab_list(
             teacher_id, student_id, list_name, description, words
         )
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        missing = "not on your account" in str(exc)
+        events.log_event(
+            events.VOCAB_LIST_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=404 if missing else 400,
+            error_message="not_found" if missing else "invalid_vocab",
+        )
+        return jsonify({"error": str(exc)}), 404 if missing else 400
+    except Exception:
+        app.logger.exception("Could not create vocab list for teacher %s", teacher_id)
+        events.log_event(
+            events.VOCAB_LIST_CREATED,
+            teacher_id=teacher_id,
+            success=False,
+            status_code=500,
+            error_message="database_error",
+        )
+        return jsonify({"error": "Could not create that vocab."}), 500
+    events.log_event(
+        events.VOCAB_LIST_CREATED,
+        teacher_id=teacher_id,
+        entity="vocabList",
+        entity_id=vocab_list["vocab_list_id"],
+        success=True,
+        status_code=200,
+    )
     return jsonify({"ok": True, "vocab_list": vocab_list})
 
 
@@ -1085,11 +1577,38 @@ def api_add_vocab_words(vocab_list_id):
     body = request.get_json() or {}
     words = _parse_words(body.get("words"))
     if not words:
+        events.log_event(
+            events.VOCAB_LIST_UPDATED,
+            teacher_id=teacher_id,
+            entity="vocabList",
+            entity_id=vocab_list_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_vocab",
+        )
         return jsonify({"error": "Add at least one word."}), 400
     try:
         added = db.add_words_to_list(teacher_id, vocab_list_id, words)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        missing = "not on your account" in str(exc)
+        events.log_event(
+            events.VOCAB_LIST_UPDATED,
+            teacher_id=teacher_id,
+            entity="vocabList",
+            entity_id=vocab_list_id,
+            success=False,
+            status_code=404 if missing else 400,
+            error_message="not_found" if missing else "invalid_vocab",
+        )
+        return jsonify({"error": str(exc)}), 404 if missing else 400
+    events.log_event(
+        events.VOCAB_LIST_UPDATED,
+        teacher_id=teacher_id,
+        entity="vocabList",
+        entity_id=vocab_list_id,
+        success=True,
+        status_code=200,
+    )
     return jsonify({"ok": True, "words": added})
 
 
@@ -1102,16 +1621,43 @@ def api_update_vocab_list(vocab_list_id):
     list_name = (body.get("list_name") or "").strip()
     description = (body.get("description") or "").strip()
     words = _parse_words(body.get("words"))
-    if not list_name:
-        return jsonify({"error": "Enter a name."}), 400
-    if not words:
+    if not list_name or not words:
+        events.log_event(
+            events.VOCAB_LIST_UPDATED,
+            teacher_id=teacher_id,
+            entity="vocabList",
+            entity_id=vocab_list_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_vocab",
+        )
+        if not list_name:
+            return jsonify({"error": "Enter a name."}), 400
         return jsonify({"error": "Add at least one word."}), 400
     try:
         vocab_list = db.update_vocab_list(
             teacher_id, vocab_list_id, list_name, description, words
         )
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        missing = "not on your account" in str(exc)
+        events.log_event(
+            events.VOCAB_LIST_UPDATED,
+            teacher_id=teacher_id,
+            entity="vocabList",
+            entity_id=vocab_list_id,
+            success=False,
+            status_code=404 if missing else 400,
+            error_message="not_found" if missing else "invalid_vocab",
+        )
+        return jsonify({"error": str(exc)}), 404 if missing else 400
+    events.log_event(
+        events.VOCAB_LIST_UPDATED,
+        teacher_id=teacher_id,
+        entity="vocabList",
+        entity_id=vocab_list_id,
+        success=True,
+        status_code=200,
+    )
     return jsonify({"ok": True, "vocab_list": vocab_list})
 
 
@@ -1123,7 +1669,37 @@ def api_delete_vocab_list(vocab_list_id):
     try:
         db.delete_vocab_list(teacher_id, vocab_list_id)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        missing = "not on your account" in str(exc)
+        events.log_event(
+            events.VOCAB_LIST_DELETED,
+            teacher_id=teacher_id,
+            entity="vocabList",
+            entity_id=vocab_list_id,
+            success=False,
+            status_code=404 if missing else 400,
+            error_message="not_found" if missing else "invalid_vocab",
+        )
+        return jsonify({"error": str(exc)}), 404 if missing else 400
+    except Exception:
+        app.logger.exception("Could not delete vocab list %s", vocab_list_id)
+        events.log_event(
+            events.VOCAB_LIST_DELETED,
+            teacher_id=teacher_id,
+            entity="vocabList",
+            entity_id=vocab_list_id,
+            success=False,
+            status_code=500,
+            error_message="database_error",
+        )
+        return jsonify({"error": "Could not delete that vocab."}), 500
+    events.log_event(
+        events.VOCAB_LIST_DELETED,
+        teacher_id=teacher_id,
+        entity="vocabList",
+        entity_id=vocab_list_id,
+        success=True,
+        status_code=200,
+    )
     return jsonify({"ok": True})
 
 
@@ -1316,7 +1892,7 @@ def _stash_modulated_worksheet(teacher_id, result, body, target_grade, student_i
         {key: value for key, value in block.items() if key != "asset_base64"}
         for block in result.get("blocks") or []
     ]
-    return cache.stash_pending_worksheet(
+    return _persist_and_stash(
         teacher_id,
         base64.b64decode(result["pdf_base64"]),
         {
@@ -1333,6 +1909,7 @@ def _stash_modulated_worksheet(teacher_id, result, body, target_grade, student_i
             "studentid": student_id,
             "vocabListid": None,
             "sourceurl": None,
+            "source": "initial",
             "content": json.dumps({
                 "title": result.get("title"),
                 "worksheet_kind": body.get("worksheet_kind") or "practice",
@@ -1391,12 +1968,42 @@ def generate_leveled_passage():
     })
 
 
-def _stash_or_none(teacher_id, pdf_bytes, record):
+def _persist_and_stash(teacher_id, pdf_bytes, record):
+    """Write the version now. Blob keys stay NULL until the first download."""
+    generation_id = uuid.uuid4().hex
+    persisted = False
     try:
-        return cache.stash_pending_worksheet(teacher_id, pdf_bytes, record)
+        db.insert_worksheet(teacher_id, generation_id, record)
+        persisted = True
+    except IntegrityError:
+        if db.find_worksheet_by_generation(teacher_id, generation_id) is None:
+            raise
+        persisted = True
+    except Exception:
+        app.logger.exception("Could not persist worksheet version")
+        generation_id = None
+
+    try:
+        return cache.stash_pending_worksheet(
+            teacher_id, pdf_bytes, record, generation_id=generation_id
+        )
     except Exception:
         app.logger.exception("Could not hold the generated worksheet for saving")
-        return None
+        return generation_id if persisted else None
+
+
+def _stash_or_none(teacher_id, pdf_bytes, record):
+    return _persist_and_stash(teacher_id, pdf_bytes, record)
+
+
+def _log_generation_failure(teacher_id, status_code, error_message):
+    events.log_event(
+        events.WORKSHEET_GENERATED,
+        teacher_id=teacher_id,
+        success=False,
+        status_code=status_code,
+        error_message=error_message,
+    )
 
 
 @app.route("/generate", methods=["POST"])
@@ -1405,16 +2012,17 @@ def generate():
     if error:
         return error
 
-    is_pro = billing.is_teacher_pro(teacher_id)
-    session["membership"] = "pro" if is_pro else "standard"
+    is_pro = billing.has_pro_access(teacher_id)
     if not is_pro:
         try:
             if cache.worksheet_quota_used(teacher_id):
+                _log_generation_failure(teacher_id, 429, "quota_exceeded")
                 return jsonify({
                     "error": "Standard includes one worksheet a day. Upgrade to Pro for more.",
                 }), 429
         except Exception:
             app.logger.exception("Redis quota check failed")
+            _log_generation_failure(teacher_id, 503, "generation_failed")
             return jsonify({"error": "Could not check your daily worksheet limit."}), 503
 
     body = request.get_json() or {}
@@ -1425,30 +2033,41 @@ def generate():
     focus_vocabulary = body.get("focus_vocabulary", "")
     focus_phonics = body.get("focus_phonics", "")
     dok_raw = body.get("dok_level", 1)
-    if str(dok_raw).strip().lower() == "custom":
-        dok_levels = ai.parse_dok_levels(body.get("dok_levels") or [])
-        if not body.get("dok_levels"):
-            return jsonify({"error": "Pick at least one question type."}), 400
-    else:
-        dok_levels = [ai.parse_dok_level(dok_raw)]
     question_count = ai.parse_question_count(body.get("question_count", 5))
     if body.get("question_count") not in (None, ""):
         try:
             requested = int(body.get("question_count"))
         except (TypeError, ValueError):
+            _log_generation_failure(teacher_id, 400, "invalid_request")
             return jsonify({"error": "Choose how many questions you want."}), 400
         if requested < 1 or requested > ai.MAX_WORKSHEET_QUESTIONS:
+            _log_generation_failure(teacher_id, 400, "invalid_request")
             return jsonify({"error": "Choose 1 to 8 questions."}), 400
         question_count = requested
+    dok_counts = None
+    dok_slots = None
+    if str(dok_raw).strip().lower() == "custom":
+        try:
+            dok_slots = ai.parse_dok_slots(body.get("dok_slots"), question_count)
+        except ValueError as exc:
+            _log_generation_failure(teacher_id, 400, "invalid_request")
+            return jsonify({"error": str(exc)}), 400
+        dok_counts = {level: dok_slots.count(level) for level in (1, 2, 3, 4)}
+        dok_levels = [level for level in (1, 2, 3, 4) if dok_counts.get(level)]
+    else:
+        dok_levels = [ai.parse_dok_level(dok_raw)]
 
     expected_level = _level_number(reading_level)
     if expected_level is None:
+        _log_generation_failure(teacher_id, 400, "invalid_request")
         return jsonify({"error": "Please select a reading level."}), 400
     try:
         student_id = _optional_student_id(teacher_id, body.get("student_id"))
         vocab_list_id = _optional_vocab_list_id(teacher_id, body.get("vocab_list_id"))
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        missing = "not on your account" in str(exc)
+        _log_generation_failure(teacher_id, 404 if missing else 400, "not_found" if missing else "invalid_request")
+        return jsonify({"error": str(exc)}), 404 if missing else 400
 
     try:
         model_data, pdf_bytes, image_base64, _, leveling = ai.generate_full_worksheet(
@@ -1460,28 +2079,36 @@ def generate():
             dok_level=dok_levels[0],
             question_count=question_count,
             dok_levels=dok_levels,
+            dok_counts=dok_counts,
+            dok_slots=dok_slots,
         )
         if not is_pro:
             cache.mark_worksheet_used(teacher_id)
 
+        custom = str(dok_raw).strip().lower() == "custom"
+        custom_mix = (
+            {str(level): dok_counts.get(level, 0) for level in (1, 2, 3, 4) if dok_counts.get(level)}
+            | {"count": question_count}
+            if custom
+            else None
+        )
         generation_id = _stash_or_none(teacher_id, pdf_bytes, {
             "original": True,
             "sheettype": "worksheet",
             "title": (model_data.get("title") or "Worksheet")[:255],
             "expectedLevel": expected_level,
             "trueLevel": _measured_level(leveling["final"]["estimated_grade"]),
-            "targetDOKLevel": model_data["dok_level"],
-            "dokMix": (
-                None
-                if len(dok_levels) == 1
-                else {str(level): 1 for level in dok_levels} | {"count": question_count}
-            ),
+            "targetDOKLevel": "custom" if custom else model_data["dok_level"],
+            "dokRequest": custom_mix,
+            "dokMix": custom_mix,
             "phonics": _phonics_value(focus_phonics),
             "informational": False,
             "interest": (interests or "")[:255],
             "studentid": student_id,
             "vocabListid": vocab_list_id,
             "sourceurl": None,
+            "source": "initial",
+            "studentGradeAtGeneration": _level_number(grade),
             "content": json.dumps({
                 "title": model_data.get("title"),
                 "story": model_data.get("story"),
@@ -1490,11 +2117,28 @@ def generate():
                 "reading_level": reading_level,
                 "dok_level": model_data["dok_level"],
                 "dok_levels": dok_levels,
+                "dok_counts": dok_counts,
+                "dok_slots": dok_slots,
                 "question_count": question_count,
                 "phonics": _phonics_value(focus_phonics),
                 "focus_vocabulary": (focus_vocabulary or "").strip(),
             }),
         })
+
+        sheet = (
+            db.find_worksheet_by_generation(teacher_id, generation_id)
+            if generation_id
+            else None
+        )
+        if sheet is not None:
+            events.log_event(
+                events.WORKSHEET_GENERATED,
+                teacher_id=teacher_id,
+                entity="worksheet",
+                entity_id=sheet["sheetid"],
+                success=True,
+                status_code=200,
+            )
 
         return jsonify({
             "content": model_data,
@@ -1502,9 +2146,13 @@ def generate():
             "pdf_base64": base64.b64encode(pdf_bytes).decode(),
             "reading_level": leveling,
             "generation_id": generation_id,
-            "ram_mb": ai.process_ram_mb(),
         })
     except Exception as exc:
+        timed_out = isinstance(exc, (TimeoutError, RequestsTimeout)) or "timeout" in str(type(exc).__name__).lower()
+        if timed_out:
+            _log_generation_failure(teacher_id, 504, "llm_timeout")
+            return jsonify({"error": ai.user_error_message(exc)}), 504
+        _log_generation_failure(teacher_id, 500, "generation_failed")
         return _json_error(exc, log="Worksheet generation failed")
 
 
@@ -1528,38 +2176,96 @@ def create_pdf():
         return _json_error(exc, log="PDF create failed")
 
 
-def _restash_edited_generation(body, pdf_bytes):
-    """Edits produce a new PDF, so they get a new generation handle."""
+def _ensure_parent_version(teacher_id, generation_id, pending):
+    """Return the parent version row, persisting a Redis-only leftover first."""
+    parent = db.find_worksheet_by_generation(teacher_id, generation_id)
+    if parent is not None:
+        return parent
+    if pending is None or pending.get("teacher_id") != teacher_id:
+        return None
+    try:
+        return db.insert_worksheet(teacher_id, generation_id, pending["record"])
+    except IntegrityError:
+        return db.find_worksheet_by_generation(teacher_id, generation_id)
+    except Exception:
+        app.logger.exception("Could not persist parent worksheet version")
+        return None
+
+
+def _restash_edited_generation(body, pdf_bytes, source):
+    """PDF edits and image regen each write a new version row."""
     generation_id = (body.get("generation_id") or "").strip()
     teacher = _verified_teacher()
     if teacher is None or not GENERATION_ID_PATTERN.fullmatch(generation_id):
         return None
+    teacher_id = teacher["teacher_id"]
     try:
         pending = cache.load_pending_worksheet(generation_id)
     except Exception:
         app.logger.exception("Could not read the pending worksheet")
+        pending = None
+    parent = _ensure_parent_version(teacher_id, generation_id, pending)
+    if parent is None and (pending is None or pending.get("teacher_id") != teacher_id):
         return None
-    if pending is None or pending["teacher_id"] != teacher["teacher_id"]:
-        return None
-    record = dict(pending["record"])
+    record = dict((pending or {}).get("record") or {})
+    if parent is not None:
+        record.setdefault("expectedLevel", parent["expectedLevel"])
+        record.setdefault("trueLevel", parent["trueLevel"])
+        record.setdefault("targetDOKLevel", parent.get("targetDOKLevel"))
+        record.setdefault("dokRequest", parent.get("dokRequest"))
+        record.setdefault("sheettype", parent["sheettype"])
+        record.setdefault("original", parent["original"])
+        record.setdefault("informational", parent["informational"])
+        record.setdefault("interest", parent.get("interest") or "")
+        record.setdefault("phonics", parent.get("phonics"))
+        record.setdefault("studentid", parent.get("studentid"))
+        record.setdefault("vocabListid", parent.get("vocabListid"))
+        record.setdefault("content", parent.get("content") or "{}")
+        record["sheetid"] = parent["sheetid"]
+        record["parentVersionid"] = parent["versionid"]
     content = json.loads(record.get("content") or "{}")
+    old_questions = content.get("questions")
+    old_story = content.get("story")
     content.update({
         "title": body.get("title"),
         "story": body.get("story"),
         "questions": body.get("questions"),
     })
-    record["title"] = (body.get("title") or record["title"])[:255]
+    record["title"] = (body.get("title") or record.get("title") or "Worksheet")[:255]
     record["content"] = json.dumps(content)
-    return _stash_or_none(teacher["teacher_id"], pdf_bytes, record)
+    record["source"] = source
+    if old_questions != body.get("questions"):
+        record["dokMix"] = None
+    if body.get("story") and body.get("story") != old_story:
+        try:
+            from reading_level.scorer import score_text
+            record["trueLevel"] = _measured_level(score_text(body["story"]).estimated_grade)
+        except Exception:
+            pass
+    return _persist_and_stash(teacher_id, pdf_bytes, record)
 
 
 @app.route("/update-pdf", methods=["POST"])
 def update_pdf():
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
     body = request.get_json() or {}
+    image_feedback = (body.get("image_feedback") or "").strip()
+    source = "regen_image" if image_feedback else "edit"
+    is_pro = billing.has_pro_access(teacher_id)
+    if source != "edit" and not is_pro:
+        try:
+            if cache.worksheet_quota_used(teacher_id):
+                return jsonify({
+                    "error": "Standard includes one worksheet a day. Upgrade to Pro for more.",
+                }), 429
+        except Exception:
+            app.logger.exception("Redis quota check failed")
+            return jsonify({"error": "Could not check your daily worksheet limit."}), 503
 
     try:
         ai.validate_structure(body)
-        image_feedback = (body.get("image_feedback") or "").strip()
         existing_image = (body.get("image_base64") or "").strip()
 
         pdf_bytes, image_base64 = ai.build_pdf_bytes(
@@ -1568,13 +2274,14 @@ def update_pdf():
             existing_image_base64=existing_image or None,
             grade=body.get("grade"),
         )
+        if source != "edit" and not is_pro:
+            cache.mark_worksheet_used(teacher_id)
 
         return jsonify({
             "content": body,
             "image_base64": image_base64,
             "pdf_base64": base64.b64encode(pdf_bytes).decode(),
-            "generation_id": _restash_edited_generation(body, pdf_bytes),
-            "ram_mb": ai.process_ram_mb(),
+            "generation_id": _restash_edited_generation(body, pdf_bytes, source),
         })
     except Exception as exc:
         hitting_flux = bool((body.get("image_feedback") or "").strip()) or not bool(
@@ -1587,20 +2294,35 @@ def update_pdf():
         )
 
 
+def _log_download(teacher_id, *, success, status_code, error_message=None, version_id=None):
+    events.log_event(
+        events.WORKSHEET_DOWNLOADED,
+        teacher_id=teacher_id,
+        entity="version" if version_id is not None else None,
+        entity_id=version_id,
+        success=success,
+        status_code=status_code,
+        error_message=error_message,
+    )
+
+
 @app.route("/worksheets/download/<generation_id>", methods=["POST"])
 def download_worksheet(generation_id):
     teacher_id, error = _require_teacher_id()
     if error:
         return error
     if not GENERATION_ID_PATTERN.fullmatch(generation_id):
+        _log_download(teacher_id, success=False, status_code=404, error_message="not_found")
         return jsonify({"error": "Worksheet not found."}), 404
     try:
         sheet, pdf_bytes = _save_generation(teacher_id, generation_id)
     except LookupError:
+        _log_download(teacher_id, success=False, status_code=404, error_message="not_found")
         return jsonify({
             "error": "This worksheet is no longer available. Generate it again to download.",
         }), 404
     except Exception as exc:
+        _log_download(teacher_id, success=False, status_code=503, error_message="download_failed")
         return _json_error(
             exc,
             resource="storage",
@@ -1609,6 +2331,24 @@ def download_worksheet(generation_id):
         )
     response = _pdf_response(pdf_bytes, sheet["title"], as_attachment=True)
     response.headers["X-Worksheet-Id"] = str(sheet["sheetid"])
+    try:
+        db.insert_download(sheet["versionid"])
+    except Exception:
+        app.logger.exception("Could not record download for version %s", sheet.get("versionid"))
+        _log_download(
+            teacher_id,
+            success=False,
+            status_code=500,
+            error_message="download_failed",
+            version_id=sheet.get("versionid"),
+        )
+        return response
+    _log_download(
+        teacher_id,
+        success=True,
+        status_code=200,
+        version_id=sheet["versionid"],
+    )
     return response
 
 
@@ -1617,11 +2357,22 @@ def view_worksheet(sheet_id):
     teacher_id, error = _require_teacher_id()
     if error:
         return error
-    sheet = db.find_worksheet(teacher_id, sheet_id)
+    raw_version = (request.args.get("version") or "").strip()
+    version_id = None
+    if raw_version:
+        try:
+            version_id = int(raw_version)
+        except ValueError:
+            return jsonify({"error": "Worksheet not found."}), 404
+    sheet = db.find_worksheet(teacher_id, sheet_id, version_id=version_id)
     if sheet is None:
         return jsonify({"error": "Worksheet not found."}), 404
     try:
-        pdf_bytes = blobStorage.download_pdf(sheet["bloburl"])
+        pdf_bytes = _load_version_pdf(teacher_id, sheet)
+    except LookupError:
+        return jsonify({
+            "error": "This worksheet is no longer available. Generate it again to download.",
+        }), 404
     except Exception as exc:
         return _json_error(
             exc,
@@ -1637,7 +2388,18 @@ def worksheet_history():
     teacher_id, error = _require_teacher_id()
     if error:
         return redirect("/login")
-    sheets = [_history_item(sheet) for sheet in db.list_worksheets_for_teacher(teacher_id)]
+    raw = [_history_item(sheet) for sheet in db.list_worksheets_for_teacher(teacher_id)]
+    groups = {}
+    order = []
+    for item in raw:
+        key = item["sheetid"]
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+    for key in order:
+        groups[key].sort(key=lambda row: int(row.get("versionid") or 0), reverse=True)
+    sheets = [item for key in order for item in groups[key]]
     return render_template(
         "worksheet_history.html",
         active_page="history",
@@ -1672,33 +2434,79 @@ def api_worksheet_feedback(sheet_id):
             return jsonify({
                 "error": f"Rating must be {RATING_MIN} through {RATING_MAX}.",
             }), 400
-    sheet = db.update_worksheet_feedback(teacher_id, sheet_id, feedback, rating)
+    generation_id = (body.get("generation_id") or "").strip() or None
+    version_id = body.get("version_id") or body.get("versionid")
+    defaulted = False
+    if generation_id:
+        version = db.find_worksheet_by_generation(teacher_id, generation_id)
+        if version is None or int(version["sheetid"]) != int(sheet_id):
+            return jsonify({"error": "Worksheet not found."}), 404
+        version_id = version["versionid"]
+    elif version_id not in (None, ""):
+        try:
+            version_id = int(version_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Worksheet not found."}), 404
+    else:
+        version = db.latest_downloaded_version(teacher_id, sheet_id)
+        if version is None:
+            return jsonify({"error": "Worksheet not found."}), 404
+        version_id = version["versionid"]
+        defaulted = True
+    sheet = db.update_worksheet_feedback(
+        teacher_id, sheet_id, feedback, rating, version_id=version_id
+    )
     if sheet is None:
         return jsonify({"error": "Worksheet not found."}), 404
     return jsonify({
         "ok": True,
         "feedback": sheet["feedback"] or "",
         "rating": sheet["rating"],
+        "generation_id": sheet.get("generationid"),
+        "defaulted_to_latest_download": defaulted,
     })
 
 
 @app.context_processor
 def inject_nav():
     teacher_id = session.get("teacher_id")
-    empty = {"nav_recent": [], "nav_classes": []}
+    empty = {
+        "nav_recent": [],
+        "nav_classes": [],
+        "has_pro_access": False,
+        "is_paid_pro": False,
+        "pilot_badge": None,
+    }
     if not teacher_id:
         return empty
     recent = []
     classes = []
+    has_pro = False
+    paid = False
+    badge = None
     try:
-        recent = [_history_item(sheet) for sheet in db.list_worksheets_for_teacher(teacher_id)[:5]]
+        recent = [_history_item(sheet) for sheet in db.list_downloaded_versions(teacher_id, limit=5)]
     except Exception:
         app.logger.exception("Could not load recent worksheets for teacher %s", teacher_id)
     try:
         classes = db.list_classes_for_teacher(teacher_id)
     except Exception:
         app.logger.exception("Could not load classes for teacher %s", teacher_id)
-    return {"nav_recent": recent, "nav_classes": classes}
+    try:
+        has_pro = billing.has_pro_access(teacher_id)
+        paid = billing.is_paid_pro(teacher_id)
+        pilot = db.active_pilot_for_teacher(teacher_id)
+        if pilot:
+            badge = f"Pilot — {pilot['name']}, ends {pilot['endTime'].date().isoformat()}"
+    except Exception:
+        app.logger.exception("Could not load access for teacher %s", teacher_id)
+    return {
+        "nav_recent": recent,
+        "nav_classes": classes,
+        "has_pro_access": has_pro,
+        "is_paid_pro": paid,
+        "pilot_badge": badge,
+    }
 
 
 if __name__ == "__main__":
