@@ -425,8 +425,12 @@ def test_generated_sheet_rebuild_keeps_template_html_and_image_slot():
         block for block in page.get_text("dict")["blocks"] if block.get("type") == 1
     ]
     doc.close()
-    assert images
-    bbox = images[0]["bbox"]
+    illustrations = [
+        block for block in images
+        if abs((block["bbox"][2] - block["bbox"][0]) - 200) < 2
+    ]
+    assert illustrations
+    bbox = illustrations[0]["bbox"]
     assert abs(bbox[0] - 355) < 2
     assert abs(bbox[1] - 125) < 2
     assert abs((bbox[2] - bbox[0]) - 200) < 2

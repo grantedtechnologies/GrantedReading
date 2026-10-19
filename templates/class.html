@@ -343,6 +343,7 @@
   <div class="class-layout{% if show_form %} has-profile{% endif %}">
     <section class="roster-col">
       <h1 class="col-title">{{ classroom.name }}</h1>
+      <p class="hint">{% if classroom.class_type == 'special-education' %}Special education{% elif classroom.class_type == 'excelerated/AP' %}Accelerated/AP{% else %}Standard{% endif %}</p>
       <div class="student-list">
         {% for student in students %}
         {% set full_name = student.first_name if student.first_name == student.last_name else (student.first_name ~ ' ' ~ student.last_name) %}

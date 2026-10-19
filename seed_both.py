@@ -16,6 +16,7 @@ import pymysql
 from dotenv import load_dotenv
 
 import blobStorage
+import district_directory
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_PATH = os.path.join(ROOT, "granted.sql")
@@ -92,10 +93,11 @@ def reload_schema():
     try:
         with connection.cursor() as cursor:
             schema_count = _run_sql(cursor, SCHEMA_PATH)
+            district_count = district_directory.load(cursor)
             seed_count = _run_sql(cursor, SEED_PATH)
     finally:
         connection.close()
-    return schema_count, seed_count
+    return schema_count, seed_count, district_count
 
 
 def clear_attached_worksheets():
@@ -117,8 +119,9 @@ def main():
     if _on_railway():
         print("seed_both.py refuses to run when Railway environment variables are set.")
         return 1
-    schema_count, seed_count = reload_schema()
+    schema_count, seed_count, district_count = reload_schema()
     print(f"Reloaded granted.sql ({schema_count} statements) and seed_dev.sql ({seed_count} statements).")
+    print(f"Loaded {district_count} districts.")
     removed, kept = clear_attached_worksheets()
     if removed:
         print(f"Removed {len(removed)} teacher-attached worksheet(s):")

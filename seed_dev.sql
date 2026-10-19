@@ -4,23 +4,31 @@
 -- that were actually stored.
 -- Sessions and Events use the same timestamps as the rows above.
 
-INSERT INTO `Teachers` (fname, lname, email, password, verified, createdAt) VALUES
-  ('Maya', 'Chen', 'maya.chen@granted.local', 'password123', 1, '2026-06-01 09:00:00'),
-  ('Luis', 'Rivera', 'luis.rivera@granted.local', 'password123', 1, '2026-09-01 09:00:00'),
-  ('Priya', 'Nair', 'priya.nair@granted.local', 'password123', 1, '2026-08-15 09:00:00'),
-  ('Sam', 'Ortiz', 'sam.ortiz@granted.local', 'password123', 1, '2026-01-20 09:00:00');
+INSERT INTO `Teachers` (fname, lname, email, password, verified, createdAt, country, state, city, school, district) VALUES
+  ('Maya', 'Chen', 'maya.chen@granted.local', 'password123', 1, '2026-06-01 09:00:00', 'United States', 'New York', 'New York', 'Lincoln Elementary', 'Metro District'),
+  ('Luis', 'Rivera', 'luis.rivera@granted.local', 'password123', 1, '2026-09-01 09:00:00', 'United States', 'California', 'Riverside', 'Grant Middle', 'Metro District'),
+  ('Priya', 'Nair', 'priya.nair@granted.local', 'password123', 1, '2026-08-15 09:00:00', 'United States', 'California', 'Riverside', 'Riverside Elementary', 'Riverside Unified'),
+  ('Sam', 'Ortiz', 'sam.ortiz@granted.local', 'password123', 1, '2026-01-20 09:00:00', 'United States', 'California', 'Riverside', 'Grant Middle', 'Metro District');
 
-INSERT INTO `Pilot` (name, school, code, startTime, endTime, createdAt) VALUES
-  ('Riverside USD 2026', 'Riverside Unified', 'RIVERSIDE2026', '2026-08-01 00:00:00', '2027-06-30 23:59:59', '2026-08-01 09:00:00'),
-  ('Spring pilot 2026', 'Grant Middle', 'SPRING2026', '2026-01-15 00:00:00', '2026-10-20 23:59:59', '2026-01-10 09:00:00');
+-- Both seed pilots are limited to Riverside Unified. District rows load before this file.
+INSERT INTO `Pilot` (name, school, code, startTime, endTime, createdAt, districtid)
+SELECT 'Riverside USD 2026', 'Riverside Unified', 'RIVERSIDE2026', '2026-08-01 00:00:00', '2027-06-30 23:59:59', '2026-08-01 09:00:00', districtid
+FROM districts
+WHERE name = 'Riverside Unified' AND state = 'California'
+LIMIT 1;
+INSERT INTO `Pilot` (name, school, code, startTime, endTime, createdAt, districtid)
+SELECT 'Spring pilot 2026', 'Grant Middle', 'SPRING2026', '2026-01-15 00:00:00', '2026-10-20 23:59:59', '2026-01-10 09:00:00', districtid
+FROM districts
+WHERE name = 'Riverside Unified' AND state = 'California'
+LIMIT 1;
 
-INSERT INTO `class` (teacherid, subject, name, gradeLevel, schoolYear, createdAt, updatedAt) VALUES
-  (1, 'English', '1st Period ELA', 4, '2026-2027', '2026-09-28 15:00:00', '2026-09-28 15:00:00'),
-  (1, 'Science', '2nd Period Science', 4, '2026-2027', '2026-09-28 15:10:00', '2026-09-28 15:10:00'),
-  (2, 'History', '3rd Period History', 6, '2026-2027', '2026-09-29 16:30:00', '2026-09-29 16:30:00'),
-  (2, 'Reading', 'Reading Lab', 6, '2026-2027', '2026-09-29 16:40:00', '2026-09-29 16:40:00'),
-  (3, 'English', 'Pilot ELA', 5, '2026-2027', '2026-09-30 10:30:00', '2026-09-30 10:30:00'),
-  (4, 'Reading', 'Expired Pilot Lab', 3, '2025-2026', '2026-10-03 13:00:00', '2026-10-03 13:00:00');
+INSERT INTO `class` (teacherid, subject, name, `type`, gradeLevel, schoolYear, createdAt, updatedAt) VALUES
+  (1, 'English', '1st Period ELA', 'standard', 4, '2026-2027', '2026-09-28 15:00:00', '2026-09-28 15:00:00'),
+  (1, 'Science', '2nd Period Science', 'special-education', 4, '2026-2027', '2026-09-28 15:10:00', '2026-09-28 15:10:00'),
+  (2, 'History', '3rd Period History', 'standard', 6, '2026-2027', '2026-09-29 16:30:00', '2026-09-29 16:30:00'),
+  (2, 'Reading', 'Reading Lab', 'excelerated/AP', 6, '2026-2027', '2026-09-29 16:40:00', '2026-09-29 16:40:00'),
+  (3, 'English', 'Pilot ELA', 'standard', 5, '2026-2027', '2026-09-30 10:30:00', '2026-09-30 10:30:00'),
+  (4, 'Reading', 'Expired Pilot Lab', 'standard', 3, '2025-2026', '2026-10-03 13:00:00', '2026-10-03 13:00:00');
 
 INSERT INTO `Students` (classid, fname, lname, `grade-level`, `reading-level`, notes, createdAt, updatedAt) VALUES
   (1, 'Jordan', 'Hale', 4, 2, 'Works hard with short decodable stories. Loves dinosaurs.', '2026-09-28 15:20:00', '2026-09-28 15:20:00'),

@@ -15,10 +15,28 @@ def _signup_body(**overrides):
         "email": "ada@x.test",
         "password": "Pass1!",
         "password_confirm": "Pass1!",
+        "school": "Lincoln Elementary",
+        "country": "United States",
+        "state": "Pennsylvania",
+        "city": "Philadelphia",
+        "district": "Metro District",
         "membership": "standard",
     }
     body.update(overrides)
     return body
+
+
+def test_signup_requires_country_state_and_city(monkeypatch):
+    created = []
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(app_module.db, "create_teacher", lambda *args: created.append(args))
+    body = _signup_body()
+    body["country"] = ""
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=body)
+    assert response.status_code == 400
+    assert "country" in response.get_json()["error"].lower()
+    assert created == []
 
 
 def test_signup_reports_when_the_confirmation_email_does_not_send(monkeypatch):
@@ -55,8 +73,8 @@ def test_unverified_signup_can_be_retried(monkeypatch):
     refreshed = dict(existing)
     calls = []
 
-    def refresh(teacher_id, first_name, last_name, password):
-        calls.append((teacher_id, first_name, last_name, password))
+    def refresh(teacher_id, first_name, last_name, password, school, district, country, state, city):
+        calls.append((teacher_id, first_name, last_name, password, school, district, country, state, city))
         refreshed["password"] = password
         return refreshed
 
@@ -68,7 +86,10 @@ def test_unverified_signup_can_be_retried(monkeypatch):
     data = response.get_json()
     assert response.status_code == 200
     assert data["email_sent"] is True
-    assert calls == [(9, "Ada", "Lovelace", "Pass1!")]
+    assert calls == [(
+        9, "Ada", "Lovelace", "Pass1!", "Lincoln Elementary", "Metro District",
+        "United States", "Pennsylvania", "Philadelphia",
+    )]
 
 
 def test_unknown_pilot_code_does_not_create_an_account(monkeypatch):
@@ -121,6 +142,8 @@ def test_live_pilot_skips_payment_and_sends_confirmation(monkeypatch):
             "name": "Riverside",
             "startTime": now - timedelta(days=1),
             "endTime": now + timedelta(days=30),
+            "district_name": "Metro District",
+            "district_state": "Pennsylvania",
         },
     )
     monkeypatch.setattr(
@@ -143,6 +166,33 @@ def test_live_pilot_skips_payment_and_sends_confirmation(monkeypatch):
     assert data["needs_verification"] is True
     assert "checkout_url" not in data
     assert created and created[0][-1]["pilotid"] == 1
+
+
+def test_pilot_code_rejects_a_teacher_outside_the_district(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    created = []
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(
+        app_module.db,
+        "find_pilot_by_code",
+        lambda code: {
+            "pilotid": 1,
+            "name": "Riverside",
+            "startTime": now - timedelta(days=1),
+            "endTime": now + timedelta(days=30),
+            "district_name": "Riverside Unified",
+            "district_state": "California",
+            "district_state_code": "CA",
+        },
+    )
+    monkeypatch.setattr(app_module.db, "create_teacher_with_pilot", lambda *args: created.append(args))
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=_signup_body(membership="pilot", pilot_code="RIVERSIDE2026"))
+    assert response.status_code == 400
+    assert "Riverside Unified" in response.get_json()["error"]
+    assert created == []
 
 
 def test_verified_email_cannot_be_signed_up_again(monkeypatch):

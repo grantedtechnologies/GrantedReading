@@ -95,6 +95,8 @@ def test_pilot_lookup_is_case_insensitive(mysql):
     if found is None:
         pytest.skip("seed_dev.sql is not loaded")
     assert found["code"] == "RIVERSIDE2026"
+    assert found["district_name"] == "Riverside Unified"
+    assert found["district_state"] == "California"
 
 
 def test_has_pro_access_does_not_use_latest_row(monkeypatch):

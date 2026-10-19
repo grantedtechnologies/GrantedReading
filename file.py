@@ -12,6 +12,11 @@ IMAGE_WIDTH = 200
 IMAGE_HEIGHT = 200
 IMAGE_TOP = 125
 IMAGE_RIGHT_MARGIN = 40
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo.png")
+LOGO_DISPLAY_WIDTH = 84
+LOGO_DISPLAY_HEIGHT = LOGO_DISPLAY_WIDTH * (343 / 872)
+FOOTER_BOTTOM = 14
+FOOTER_RESERVE = FOOTER_BOTTOM + LOGO_DISPLAY_HEIGHT + 8
 
 WORKSHEET_CSS = """
 body {
@@ -221,11 +226,11 @@ def _render_html_to_pdf(worksheet_html, archive=None):
     try:
         writer = fitz.DocumentWriter(path)
         mediabox = fitz.paper_rect("a4")
-        content_rect = mediabox + (
-            PAGE_MARGIN,
-            PAGE_MARGIN,
-            -PAGE_MARGIN,
-            -PAGE_MARGIN,
+        content_rect = fitz.Rect(
+            mediabox.x0 + PAGE_MARGIN,
+            mediabox.y0 + PAGE_MARGIN,
+            mediabox.x1 - PAGE_MARGIN,
+            mediabox.y1 - FOOTER_RESERVE,
         )
 
         more = 1
@@ -238,10 +243,24 @@ def _render_html_to_pdf(worksheet_html, archive=None):
         writer.close()
 
         with open(path, "rb") as pdf_file:
-            return pdf_file.read()
+            return _stamp_logo(pdf_file.read())
     finally:
         if os.path.exists(path):
             os.unlink(path)
+
+
+def _stamp_logo(pdf_bytes):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    for page in doc:
+        x0 = page.rect.width - PAGE_MARGIN - LOGO_DISPLAY_WIDTH
+        y1 = page.rect.height - FOOTER_BOTTOM
+        y0 = y1 - LOGO_DISPLAY_HEIGHT
+        page.insert_image(
+            fitz.Rect(x0, y0, x0 + LOGO_DISPLAY_WIDTH, y1),
+            filename=LOGO_PATH,
+            keep_proportion=True,
+        )
+    return doc.tobytes()
 
 
 def _image_rect(page):

@@ -52,7 +52,7 @@ def find_teacher_by_email(email):
             text(
                 """
                 SELECT teacherid AS teacher_id, fname AS first_name, lname AS last_name,
-                       email, password, verified
+                       email, password, verified, country, state, city, school, district
                 FROM Teachers
                 WHERE email = :email
                 ORDER BY verified DESC, teacherid ASC
@@ -64,14 +64,17 @@ def find_teacher_by_email(email):
         return dict(row) if row else None
 
 
-def create_teacher(first_name, last_name, email, password):
+def create_teacher(first_name, last_name, email, password, school, district, country, state, city):
     try:
         with engine.begin() as conn:
             result = conn.execute(
                 text(
                     """
-                    INSERT INTO Teachers (fname, lname, email, password, verified)
-                    VALUES (:first_name, :last_name, :email, :password, 0)
+                    INSERT INTO Teachers
+                      (fname, lname, email, password, verified, country, state, city, school, district)
+                    VALUES
+                      (:first_name, :last_name, :email, :password, 0,
+                       :country, :state, :city, :school, :district)
                     """
                 ),
                 {
@@ -79,6 +82,11 @@ def create_teacher(first_name, last_name, email, password):
                     "last_name": last_name,
                     "email": email,
                     "password": password,
+                    "country": country,
+                    "state": state,
+                    "city": city,
+                    "school": school,
+                    "district": district,
                 },
             )
             return {
@@ -86,20 +94,27 @@ def create_teacher(first_name, last_name, email, password):
                 "first_name": first_name,
                 "last_name": last_name,
                 "email": email,
+                "country": country,
+                "state": state,
+                "city": city,
+                "school": school,
+                "district": district,
                 "verified": 0,
             }
     except IntegrityError as exc:
         raise ValueError("That email is already in use.") from exc
 
 
-def refresh_unverified_teacher(teacher_id, first_name, last_name, password):
+def refresh_unverified_teacher(teacher_id, first_name, last_name, password, school, district, country, state, city):
     """Update a pending signup so the teacher can try verification again."""
     with engine.begin() as conn:
         result = conn.execute(
             text(
                 """
                 UPDATE Teachers
-                SET fname = :first_name, lname = :last_name, password = :password
+                SET fname = :first_name, lname = :last_name, password = :password,
+                    country = :country, state = :state, city = :city,
+                    school = :school, district = :district
                 WHERE teacherid = :teacher_id AND verified = 0
                 """
             ),
@@ -108,6 +123,11 @@ def refresh_unverified_teacher(teacher_id, first_name, last_name, password):
                 "first_name": first_name,
                 "last_name": last_name,
                 "password": password,
+                "country": country,
+                "state": state,
+                "city": city,
+                "school": school,
+                "district": district,
             },
         )
         if result.rowcount == 0:
@@ -145,13 +165,14 @@ def list_classes_for_teacher(teacher_id):
                   c.teacherid AS teacher_id,
                   c.subject,
                   c.name,
+                  c.type AS class_type,
                   c.gradeLevel AS grade_level,
                   c.schoolYear AS school_year,
                   COUNT(s.studentid) AS student_count
                 FROM class c
                 LEFT JOIN Students s ON s.classid = c.classid
                 WHERE c.teacherid = :teacher_id
-                GROUP BY c.classid, c.teacherid, c.subject, c.name, c.gradeLevel, c.schoolYear
+                GROUP BY c.classid, c.teacherid, c.subject, c.name, c.type, c.gradeLevel, c.schoolYear
                 ORDER BY c.name, c.classid
                 """
             ),
@@ -165,19 +186,20 @@ def list_classes_for_teacher(teacher_id):
     return classes
 
 
-def create_class(teacher_id, name, subject, grade_level, school_year):
+def create_class(teacher_id, name, subject, grade_level, school_year, class_type):
     with engine.begin() as conn:
         result = conn.execute(
             text(
                 """
-                INSERT INTO class (teacherid, subject, name, gradeLevel, schoolYear)
-                VALUES (:teacher_id, :subject, :name, :grade_level, :school_year)
+                INSERT INTO class (teacherid, subject, name, `type`, gradeLevel, schoolYear)
+                VALUES (:teacher_id, :subject, :name, :class_type, :grade_level, :school_year)
                 """
             ),
             {
                 "teacher_id": teacher_id,
                 "subject": subject,
                 "name": name,
+                "class_type": class_type,
                 "grade_level": grade_level,
                 "school_year": school_year,
             },
@@ -187,6 +209,7 @@ def create_class(teacher_id, name, subject, grade_level, school_year):
             "teacher_id": teacher_id,
             "subject": subject,
             "name": name,
+            "class_type": class_type,
             "grade_level": grade_level,
             "school_year": school_year,
             "student_count": 0,
@@ -293,7 +316,7 @@ def find_teacher_by_id(teacher_id):
             text(
                 """
                 SELECT teacherid AS teacher_id, fname AS first_name, lname AS last_name,
-                       email, verified
+                       email, verified, country, state, city, school, district
                 FROM Teachers
                 WHERE teacherid = :teacher_id
                 """
@@ -303,13 +326,15 @@ def find_teacher_by_id(teacher_id):
         return dict(row) if row else None
 
 
-def update_teacher(teacher_id, first_name, last_name):
+def update_teacher(teacher_id, first_name, last_name, school, district, country, state, city):
     with engine.begin() as conn:
         conn.execute(
             text(
                 """
                 UPDATE Teachers
-                SET fname = :first_name, lname = :last_name
+                SET fname = :first_name, lname = :last_name,
+                    country = :country, state = :state, city = :city,
+                    school = :school, district = :district
                 WHERE teacherid = :teacher_id
                 """
             ),
@@ -317,9 +342,86 @@ def update_teacher(teacher_id, first_name, last_name):
                 "teacher_id": teacher_id,
                 "first_name": first_name,
                 "last_name": last_name,
+                "country": country,
+                "state": state,
+                "city": city,
+                "school": school,
+                "district": district,
             },
         )
     return find_teacher_by_id(teacher_id)
+
+
+def _district_rows(result):
+    return [
+        {
+            "name": row["name"],
+            "city": row["city"],
+            "state": row["state"],
+            "country": row["country"],
+        }
+        for row in result.mappings()
+    ]
+
+
+def search_districts(country, state, city, query=""):
+    country = (country or "").strip()
+    state = (state or "").strip()
+    city = (city or "").strip()
+    query = (query or "").replace("%", "").replace("_", "").strip()
+    if not country or not state or not city:
+        return []
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT name, city, state, country
+                FROM districts
+                WHERE LOWER(country) = LOWER(:country)
+                  AND (
+                    LOWER(state) = LOWER(:state)
+                    OR LOWER(stateCode) = LOWER(:state)
+                  )
+                  AND (
+                    LOWER(city) = LOWER(:city)
+                    OR (CHAR_LENGTH(:city) >= 3 AND LOWER(city) LIKE CONCAT(LOWER(:city), '%'))
+                  )
+                  AND (:query = '' OR LOWER(name) LIKE CONCAT('%', LOWER(:query), '%'))
+                ORDER BY CASE WHEN LOWER(city) = LOWER(:city) THEN 0 ELSE 1 END, name
+                LIMIT 40
+                """
+            ),
+            {"country": country, "state": state, "city": city, "query": query},
+        )
+        return _district_rows(result)
+
+
+def nearby_districts(latitude, longitude, miles=50):
+    lat = float(latitude)
+    lng = float(longitude)
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError("That location is not valid.")
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT name, city, state, country,
+                       (3959 * ACOS(LEAST(1, GREATEST(-1,
+                         COS(RADIANS(:lat)) * COS(RADIANS(latitude))
+                         * COS(RADIANS(longitude) - RADIANS(:lng))
+                         + SIN(RADIANS(:lat)) * SIN(RADIANS(latitude))
+                       )))) AS miles
+                FROM districts
+                WHERE latitude BETWEEN :lat - 2 AND :lat + 2
+                  AND longitude BETWEEN :lng - 2 AND :lng + 2
+                HAVING miles <= :miles
+                ORDER BY miles
+                LIMIT 25
+                """
+            ),
+            {"lat": lat, "lng": lng, "miles": miles},
+        )
+        return _district_rows(result)
 
 
 def create_student(
@@ -1029,9 +1131,12 @@ def find_pilot_by_code(code):
         row = conn.execute(
             text(
                 """
-                SELECT pilotid, name, school, code, startTime, endTime
-                FROM Pilot
-                WHERE LOWER(code) = LOWER(:code)
+                SELECT p.pilotid, p.name, p.school, p.code, p.startTime, p.endTime,
+                       p.districtid AS district_id, d.name AS district_name,
+                       d.state AS district_state, d.stateCode AS district_state_code
+                FROM Pilot p
+                JOIN districts d ON d.districtid = p.districtid
+                WHERE LOWER(p.code) = LOWER(:code)
                 LIMIT 1
                 """
             ),
@@ -1060,15 +1165,18 @@ def join_pilot(teacher_id, pilot):
         )
 
 
-def create_teacher_with_pilot(first_name, last_name, email, password, pilot):
+def create_teacher_with_pilot(first_name, last_name, email, password, school, district, country, state, city, pilot):
     """Create the teacher and the pilot subscription in one transaction."""
     try:
         with engine.begin() as conn:
             result = conn.execute(
                 text(
                     """
-                    INSERT INTO Teachers (fname, lname, email, password, verified)
-                    VALUES (:first_name, :last_name, :email, :password, 0)
+                    INSERT INTO Teachers
+                      (fname, lname, email, password, verified, country, state, city, school, district)
+                    VALUES
+                      (:first_name, :last_name, :email, :password, 0,
+                       :country, :state, :city, :school, :district)
                     """
                 ),
                 {
@@ -1076,6 +1184,11 @@ def create_teacher_with_pilot(first_name, last_name, email, password, pilot):
                     "last_name": last_name,
                     "email": email,
                     "password": password,
+                    "country": country,
+                    "state": state,
+                    "city": city,
+                    "school": school,
+                    "district": district,
                 },
             )
             teacher_id = result.lastrowid
@@ -1099,17 +1212,24 @@ def create_teacher_with_pilot(first_name, last_name, email, password, pilot):
         "first_name": first_name,
         "last_name": last_name,
         "email": email,
+        "country": country,
+        "state": state,
+        "city": city,
+        "school": school,
+        "district": district,
         "verified": 0,
     }
 
 
-def refresh_unverified_teacher_with_pilot(teacher_id, first_name, last_name, password, pilot):
+def refresh_unverified_teacher_with_pilot(teacher_id, first_name, last_name, password, school, district, country, state, city, pilot):
     with engine.begin() as conn:
         result = conn.execute(
             text(
                 """
                 UPDATE Teachers
-                SET fname = :first_name, lname = :last_name, password = :password
+                SET fname = :first_name, lname = :last_name, password = :password,
+                    country = :country, state = :state, city = :city,
+                    school = :school, district = :district
                 WHERE teacherid = :teacher_id AND verified = 0
                 """
             ),
@@ -1118,6 +1238,11 @@ def refresh_unverified_teacher_with_pilot(teacher_id, first_name, last_name, pas
                 "first_name": first_name,
                 "last_name": last_name,
                 "password": password,
+                "country": country,
+                "state": state,
+                "city": city,
+                "school": school,
+                "district": district,
             },
         )
         if result.rowcount == 0:

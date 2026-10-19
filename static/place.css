@@ -1,0 +1,58 @@
+.hidden { display: none !important; }
+
+.place-consent {
+  border: 1px solid var(--border);
+  background: var(--green-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.place-consent p {
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.place-consent-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.place-consent-actions button {
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.place-allow {
+  background: var(--green);
+  color: white;
+  border: none;
+}
+
+.place-decline {
+  background: var(--white);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+.district-list {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  background: var(--white);
+}
+
+.place-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  min-height: 16px;
+}

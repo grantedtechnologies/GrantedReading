@@ -89,6 +89,14 @@
           <select id="class-year"></select>
         </div>
       </div>
+      <div class="field">
+        <label for="class-type">Class type</label>
+        <select id="class-type">
+          <option value="standard">Standard</option>
+          <option value="special-education">Special education</option>
+          <option value="excelerated/AP">Accelerated/AP</option>
+        </select>
+      </div>
       <button class="submit" type="submit">Add class</button>
       <div class="status" id="class-status"></div>
     </form>
@@ -110,6 +118,11 @@
     { value: 7, label: "7th" }, { value: 8, label: "8th" }, { value: 9, label: "9th" },
     { value: 10, label: "10th" }, { value: 11, label: "11th" }, { value: 12, label: "12th" },
   ];
+  const classTypeLabels = {
+    standard: "Standard",
+    "special-education": "Special education",
+    "excelerated/AP": "Accelerated/AP",
+  };
   let classes = [];
   const fromAccount = {{ 'true' if from_account else 'false' }};
 
@@ -156,7 +169,7 @@
       <div class="class-row">
         <a class="class-link" href="/classes/${item.class_id}">
           <div class="class-name">${escapeHtml(item.name)}</div>
-          <div class="class-meta">${escapeHtml(item.subject)} · ${escapeHtml(gradeLabel(item.grade_level))} · ${escapeHtml(item.school_year)}</div>
+          <div class="class-meta">${escapeHtml(item.subject)} · ${escapeHtml(classTypeLabels[item.class_type] || item.class_type)} · ${escapeHtml(gradeLabel(item.grade_level))} · ${escapeHtml(item.school_year)}</div>
         </a>
         <button class="text-btn remove-class" type="button" data-class-id="${item.class_id}">Remove</button>
       </div>
@@ -213,6 +226,7 @@
       subject: document.getElementById("class-subject").value,
       grade_level: document.getElementById("class-grade").value,
       school_year: document.getElementById("class-year").value,
+      class_type: document.getElementById("class-type").value,
     });
     btn.disabled = false;
     setStatus("class-status", response.ok ? "Class added." : response.error, response.ok);

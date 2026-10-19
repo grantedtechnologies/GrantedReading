@@ -224,6 +224,7 @@ def test_each_action_writes_one_event(mysql, monkeypatch):
     created = client.post("/api/classes", json={
         "name": "Event Period",
         "subject": "English",
+        "class_type": "standard",
         "grade_level": 4,
         "school_year": "2026-2027",
     })
@@ -532,8 +533,8 @@ def test_generation_timeout_and_unverified_login(mysql, monkeypatch):
         conn.execute(
             text(
                 """
-                INSERT INTO Teachers (fname, lname, email, password, verified)
-                VALUES ('Una', 'Verified', :email, 'password123', 0)
+                INSERT INTO Teachers (fname, lname, email, password, verified, country, state, city, school, district)
+                VALUES ('Una', 'Verified', :email, 'password123', 0, 'United States', 'Pennsylvania', 'Philadelphia', 'Lincoln Elementary', 'Metro District')
                 """
             ),
             {"email": unverified_email},
@@ -624,6 +625,7 @@ def test_failed_event_insert_does_not_block_the_action(mysql, monkeypatch):
         conn.exec_driver_sql("RENAME TABLE Events TO Events_broken")
     try:
         created = client.post("/api/classes", json={
+            "class_type": "standard",
             "name": "Still saved",
             "subject": "English",
             "grade_level": 4,

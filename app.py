@@ -735,6 +735,49 @@ def login():
     return jsonify({"ok": True, "redirect": "/worksheet"})
 
 
+def _place_fields(body):
+    country = (body.get("country") or "").strip()
+    state = (body.get("state") or "").strip()
+    city = (body.get("city") or "").strip()
+    school = (body.get("school") or "").strip()
+    district = (body.get("district") or "").strip()
+    if not school or not district:
+        raise ValueError("Enter your school and district.")
+    if not country or not state or not city:
+        raise ValueError("Enter your country, state, and city.")
+    if any(len(value) > 255 for value in (country, state, city, school, district)):
+        raise ValueError("Keep the country, state, city, school, and district under 255 characters.")
+    return country, state, city, school, district
+
+
+@app.route("/api/districts", methods=["GET"])
+def api_districts():
+    return jsonify({
+        "districts": db.search_districts(
+            request.args.get("country"),
+            request.args.get("state"),
+            request.args.get("city"),
+            request.args.get("q"),
+        ),
+    })
+
+
+@app.route("/api/districts/nearby", methods=["POST"])
+def api_districts_nearby():
+    body = request.get_json() or {}
+    try:
+        rows = db.nearby_districts(body.get("latitude"), body.get("longitude"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "That location is not valid."}), 400
+    nearest = rows[0] if rows else {}
+    return jsonify({
+        "country": nearest.get("country"),
+        "state": nearest.get("state"),
+        "city": nearest.get("city"),
+        "districts": rows,
+    })
+
+
 @app.route("/signup", methods=["POST"])
 def signup():
     body = request.get_json() or {}
@@ -746,6 +789,10 @@ def signup():
 
     if not first_name or not last_name:
         return jsonify({"error": "Enter a first and last name."}), 400
+    try:
+        country, state, city, school, district = _place_fields(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not email or not password:
         return jsonify({"error": "Enter an email and password."}), 400
     problem = _password_problem(password, confirm)
@@ -756,7 +803,7 @@ def signup():
         return jsonify({"error": "Choose Standard, Pro, or Pilot."}), 400
     pilot, pilot_error = (None, None)
     if plan == "pilot":
-        pilot, pilot_error = _pilot_from_code(body.get("pilot_code"))
+        pilot, pilot_error = _pilot_for_place(body.get("pilot_code"), district, state)
         if pilot_error:
             return jsonify({"error": pilot_error, "field": "pilot_code"}), 400
         if pilot is None:
@@ -768,18 +815,24 @@ def signup():
     try:
         if existing and pilot:
             teacher = db.refresh_unverified_teacher_with_pilot(
-                existing["teacher_id"], first_name, last_name, password, pilot
+                existing["teacher_id"], first_name, last_name, password,
+                school, district, country, state, city, pilot,
             )
         elif existing:
             teacher = db.refresh_unverified_teacher(
-                existing["teacher_id"], first_name, last_name, password
+                existing["teacher_id"], first_name, last_name, password,
+                school, district, country, state, city,
             )
         elif pilot:
             teacher = db.create_teacher_with_pilot(
-                first_name, last_name, email, password, pilot
+                first_name, last_name, email, password,
+                school, district, country, state, city, pilot,
             )
         else:
-            teacher = db.create_teacher(first_name, last_name, email, password)
+            teacher = db.create_teacher(
+                first_name, last_name, email, password,
+                school, district, country, state, city,
+            )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 409
 
@@ -1108,7 +1161,13 @@ def api_update_account():
     last_name = (body.get("last_name") or "").strip()
     if not first_name or not last_name:
         return jsonify({"error": "Enter a first and last name."}), 400
-    teacher = db.update_teacher(teacher_id, first_name, last_name)
+    try:
+        country, state, city, school, district = _place_fields(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    teacher = db.update_teacher(
+        teacher_id, first_name, last_name, school, district, country, state, city
+    )
     _teacher_session(teacher)
     return jsonify({"ok": True, "teacher": teacher})
 
@@ -1119,7 +1178,12 @@ def api_redeem_pilot():
     if error:
         return error
     body = request.get_json() or {}
-    pilot, pilot_error = _pilot_from_code(body.get("pilot_code"))
+    teacher = db.find_teacher_by_id(teacher_id)
+    if teacher is None:
+        return jsonify({"error": "Sign in again."}), 401
+    pilot, pilot_error = _pilot_for_place(
+        body.get("pilot_code"), teacher.get("district"), teacher.get("state")
+    )
     if pilot_error:
         return jsonify({"error": pilot_error}), 400
     if pilot is None:
@@ -1216,19 +1280,54 @@ def _pilot_from_code(raw):
     return pilot, None
 
 
+def _district_matches_pilot(district, state, pilot):
+    given = (district or "").strip().lower()
+    district_name = (pilot.get("district_name") or "").strip().lower()
+    if not given or given != district_name:
+        return False
+    given_state = (state or "").strip().lower()
+    allowed = {
+        (pilot.get("district_state") or "").strip().lower(),
+        (pilot.get("district_state_code") or "").strip().lower(),
+    }
+    allowed.discard("")
+    return bool(given_state) and given_state in allowed
+
+
+def _pilot_for_place(raw, district, state):
+    """A live code is usable only by a teacher in that pilot's district."""
+    pilot, error = _pilot_from_code(raw)
+    if error or pilot is None:
+        return pilot, error
+    if not _district_matches_pilot(district, state, pilot):
+        name = pilot.get("district_name") or "another district"
+        return None, f"That pilot is only for {name}."
+    return pilot, None
+
+
+CLASS_TYPES = {
+    "standard": "Standard",
+    "special-education": "Special education",
+    "excelerated/AP": "Accelerated/AP",
+}
+
+
 def _class_fields(body):
     name = (body.get("name") or "").strip()
     subject = (body.get("subject") or "").strip()
     school_year = (body.get("school_year") or "").strip()
+    class_type = (body.get("class_type") or "").strip()
     if not name or not subject:
         raise ValueError("Enter a class name and subject.")
     if len(name) > 255 or len(subject) > 255:
         raise ValueError("Keep the class name and subject under 255 characters.")
+    if class_type not in CLASS_TYPES:
+        raise ValueError("Choose Standard, Special education, or Accelerated/AP.")
     match = re.fullmatch(r"(\d{4})-(\d{4})", school_year)
     if match is None or int(match.group(2)) != int(match.group(1)) + 1:
         raise ValueError("Choose a school year like 2026-2027.")
     grade_level = _parse_grade(body.get("grade_level"), "grade level")
-    return name, subject, grade_level, school_year
+    return name, subject, grade_level, school_year, class_type
 
 
 def _split_student_name(raw):
@@ -1308,7 +1407,7 @@ def api_create_class():
     if error:
         return error
     try:
-        name, subject, grade_level, school_year = _class_fields(request.get_json() or {})
+        name, subject, grade_level, school_year, class_type = _class_fields(request.get_json() or {})
     except ValueError as exc:
         events.log_event(
             events.CLASS_CREATED,
@@ -1319,7 +1418,9 @@ def api_create_class():
         )
         return jsonify({"error": str(exc)}), 400
     try:
-        classroom = db.create_class(teacher_id, name, subject, grade_level, school_year)
+        classroom = db.create_class(
+            teacher_id, name, subject, grade_level, school_year, class_type
+        )
     except Exception:
         app.logger.exception("Could not create class for teacher %s", teacher_id)
         events.log_event(

@@ -19,6 +19,8 @@ import pymysql
 from dotenv import load_dotenv
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import district_directory
 SCHEMA_PATH = os.path.join(ROOT, "granted.sql")
 SEED_PATH = os.path.join(ROOT, "seed_dev.sql")
 
@@ -103,12 +105,14 @@ def main():
                 print("The connection has no database selected. Set MYSQL_DATABASE or MYSQL_PUBLIC_URL.")
                 return 1
             schema_count = _run(cursor, SCHEMA_PATH)
+            district_count = district_directory.load(cursor)
             seed_count = _run(cursor, SEED_PATH)
             cursor.execute("SHOW TABLES")
             tables = [row[0] for row in cursor.fetchall()]
     finally:
         connection.close()
     print(f"Loaded granted.sql ({schema_count} statements) and seed_dev.sql ({seed_count} statements) into {database}.")
+    print(f"Loaded {district_count} districts.")
     print("Tables:", ", ".join(tables) or "(none)")
     return 0
 
