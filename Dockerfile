@@ -19,5 +19,5 @@ COPY . .
 EXPOSE 5000
 
 # One worker: the Foundry client and spaCy pipeline are process-local.
-# Generation can take longer than gunicorn's default 30s.
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --timeout 180 app:app"]
+# No worker timeout: writing and image requests run until they finish.
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --timeout 0 app:app"]

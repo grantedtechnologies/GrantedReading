@@ -895,7 +895,8 @@ def _get_openai_client():
     allow_preview=True,
 )
         _openai_client = _project_client.get_openai_client(
-            agent_name=LLM_AGENT_NAME
+            agent_name=LLM_AGENT_NAME,
+            timeout=None,
         )
         return _project_client, _openai_client
 
@@ -932,7 +933,7 @@ def generate_image(image_prompt):
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response = requests.post(url, headers=headers, json=payload, timeout=None)
     except Exception as exc:
         raise RuntimeError(user_error_message(exc, "flux")) from exc
 
@@ -962,7 +963,7 @@ def generate_image(image_prompt):
 
     if "url" in img:
         try:
-            img_bytes = requests.get(img["url"], timeout=60).content
+            img_bytes = requests.get(img["url"], timeout=None).content
         except Exception as exc:
             raise RuntimeError(user_error_message(exc, "flux")) from exc
         return base64.b64encode(img_bytes).decode()
