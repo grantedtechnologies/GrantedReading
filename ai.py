@@ -738,8 +738,12 @@ def generate_worksheet_questions(
         dok_counts=dok_counts,
         dok_slots=slots,
     )
-    raw_text = generate_text(prompt)
-    questions = parse_questions_output(raw_text, count)
+    data = generate_json(
+        prompt,
+        _questions_json_schema(count),
+        name="worksheet_questions",
+    )
+    questions = parse_questions_output(json.dumps(data), count)
     for level in levels:
         _log_dok_answerability(level)
     return questions
@@ -902,6 +906,7 @@ def _get_openai_client():
 
 
 def generate_text(prompt):
+    """Free-text model call. Used for rewrites and other open-ended writing."""
     ensure_ai_configured()
     try:
         _, openai_client = _get_openai_client()
@@ -912,6 +917,80 @@ def generate_text(prompt):
     if text is None or not str(text).strip():
         raise RuntimeError(FOUNDRY_DOWN)
     return text
+
+
+def _worksheet_json_schema(question_count=5) -> dict:
+    """Strict schema for a title, story, and q1..qn questions object."""
+    keys = _question_keys(parse_question_count(question_count))
+    return {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "story": {"type": "string"},
+            "questions": {
+                "type": "object",
+                "properties": {key: {"type": "string"} for key in keys},
+                "required": keys,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["title", "story", "questions"],
+        "additionalProperties": False,
+    }
+
+
+def _questions_json_schema(question_count=5) -> dict:
+    """Strict schema for a questions-only response."""
+    keys = _question_keys(parse_question_count(question_count))
+    return {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "object",
+                "properties": {key: {"type": "string"} for key in keys},
+                "required": keys,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["questions"],
+        "additionalProperties": False,
+    }
+
+
+def generate_json(prompt, schema, *, name="response") -> dict:
+    """Model call with an API-enforced JSON schema. Returns the parsed object."""
+    ensure_ai_configured()
+    try:
+        _, openai_client = _get_openai_client()
+        response = openai_client.responses.create(
+            input=prompt,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": name,
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(user_error_message(exc, "foundry")) from exc
+    text = response.output_text
+    if text is None or not str(text).strip():
+        raise RuntimeError(FOUNDRY_DOWN)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "The writing assistant returned a response that could not be read. "
+            "Try generating again."
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            "The writing assistant returned a response that could not be read. "
+            "Try generating again."
+        )
+    return data
 
 
 def generate_image(image_prompt):
@@ -1046,10 +1125,13 @@ def generate_worksheet_content(
         focus_vocabulary=focus_vocabulary,
         focus_phonics=focus_phonics,
     )
-    raw_text = generate_text(prompt)
-    model_data = parse_worksheet_output(raw_text)
+    model_data = generate_json(
+        prompt,
+        _worksheet_json_schema(5),
+        name="worksheet",
+    )
     validate_structure(model_data)
-    return model_data, raw_text
+    return model_data, json.dumps(model_data)
 
 
 def build_pdf_bytes(
@@ -1487,9 +1569,12 @@ def generate_leveled_passage(
             break
 
         prompt = build_leveled_prompt(topic, band, student_interest, feedback)
-        raw_text = generate_text(prompt)
+        model_data = generate_json(
+            prompt,
+            _worksheet_json_schema(5),
+            name="leveled_passage",
+        )
         calls_remaining -= 1
-        model_data = parse_worksheet_output(raw_text)
         validate_structure(model_data)
 
         passage = model_data["story"]

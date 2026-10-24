@@ -508,9 +508,28 @@ def test_rewrite_output_parsing(raw, expected):
 
 @pytest.fixture
 def mock_generate(monkeypatch):
+    """Canned model replies for leveled passage: JSON drafts, then free-text rewrites."""
+
     def _install(*responses):
-        generate, calls = _recorder(*responses)
-        monkeypatch.setattr(ai, "generate_text", generate)
+        calls = []
+        index = {"i": 0}
+
+        def _next():
+            i = index["i"]
+            index["i"] += 1
+            return responses[min(i, len(responses) - 1)]
+
+        def fake_text(prompt):
+            calls.append(prompt)
+            return _next()
+
+        def fake_json(prompt, schema, *, name="response"):
+            calls.append(prompt)
+            raw = _next()
+            return json.loads(raw) if isinstance(raw, str) else raw
+
+        monkeypatch.setattr(ai, "generate_text", fake_text)
+        monkeypatch.setattr(ai, "generate_json", fake_json)
         return calls
 
     return _install
@@ -524,6 +543,10 @@ def _worksheet_json(story):
             "questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)},
         }
     )
+
+
+def _worksheet_obj(story):
+    return json.loads(_worksheet_json(story))
 
 
 def test_operator_d_does_not_fire_when_correction_succeeds(
@@ -791,20 +814,52 @@ def test_parse_questions_output_respects_count():
     assert parsed == {"q1": "One?", "q2": "Two?"}
 
 
+def test_generate_json_asks_the_api_for_a_strict_schema(monkeypatch):
+    captured = {}
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_text=json.dumps({"questions": {"q1": "One?", "q2": "Two?"}})
+            )
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr(ai, "ensure_ai_configured", lambda: None)
+    monkeypatch.setattr(ai, "_get_openai_client", lambda: (None, FakeClient()))
+
+    data = ai.generate_json(
+        "write questions",
+        ai._questions_json_schema(2),
+        name="worksheet_questions",
+    )
+
+    assert data == {"questions": {"q1": "One?", "q2": "Two?"}}
+    fmt = captured["text"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["strict"] is True
+    assert fmt["name"] == "worksheet_questions"
+    assert fmt["schema"]["required"] == ["questions"]
+
+
 def test_dok_level_does_not_change_the_story_or_the_leveler(monkeypatch):
     """Changing question demand cannot change passage generation or repair."""
     story_prompts = []
     leveler_stories = []
     story = "Sam ran to the park. The sun was hot."
 
-    def fake_generate(prompt):
-        if "DOK level" in prompt:
+    def fake_json(prompt, schema, *, name="response"):
+        if name == "worksheet_questions" or "DOK" in prompt:
             level = "1" if "Recall & Reproduction" in prompt else "3"
-            return json.dumps({
-                "questions": {f"q{i}": f"DOK {level} question {i}?" for i in range(1, 6)}
-            })
+            return {
+                "questions": {
+                    f"q{i}": f"DOK {level} question {i}?" for i in range(1, 6)
+                }
+            }
         story_prompts.append(prompt)
-        return _worksheet_json(story)
+        return _worksheet_obj(story)
 
     def fake_correct(text, target, **kwargs):
         leveler_stories.append(text)
@@ -818,7 +873,7 @@ def test_dok_level_does_not_change_the_story_or_the_leveler(monkeypatch):
             failure_reason=None,
         )
 
-    monkeypatch.setattr(ai, "generate_text", fake_generate)
+    monkeypatch.setattr(ai, "generate_json", fake_json)
     monkeypatch.setattr(ai, "correct_with_rewrite", fake_correct)
     monkeypatch.setattr(ai, "generate_image", lambda prompt: "img")
     monkeypatch.setattr(ai.file, "generate_worksheet_pdf", lambda payload: b"%PDF")
@@ -851,10 +906,15 @@ def test_focus_phonics_protects_matching_words_from_the_leveler(monkeypatch):
             failure_reason=None,
         )
 
+    def fake_json(prompt, schema, *, name="response"):
+        if name == "worksheet_questions":
+            return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
+        return _worksheet_obj(
+            "The station mention of the action was a surprise."
+        )
+
     monkeypatch.setattr(ai, "correct_with_rewrite", fake_correct)
-    monkeypatch.setattr(ai, "generate_text", lambda prompt: _worksheet_json(
-        "The station mention of the action was a surprise."
-    ))
+    monkeypatch.setattr(ai, "generate_json", fake_json)
     monkeypatch.setattr(ai, "generate_image", lambda prompt: "img")
     monkeypatch.setattr(ai.file, "generate_worksheet_pdf", lambda payload: b"%PDF")
 
@@ -885,10 +945,15 @@ def test_focus_vocabulary_is_protected_from_the_leveler(monkeypatch, fixture_tex
             failure_reason=None,
         )
 
+    def fake_json(prompt, schema, *, name="response"):
+        if name == "worksheet_questions":
+            return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
+        return _worksheet_obj(
+            "The resilient girl stayed resilient when the game got hard."
+        )
+
     monkeypatch.setattr(ai, "correct_with_rewrite", fake_correct)
-    monkeypatch.setattr(ai, "generate_text", lambda prompt: _worksheet_json(
-        "The resilient girl stayed resilient when the game got hard."
-    ))
+    monkeypatch.setattr(ai, "generate_json", fake_json)
     monkeypatch.setattr(ai, "generate_image", lambda prompt: "img")
     monkeypatch.setattr(ai.file, "generate_worksheet_pdf", lambda payload: b"%PDF")
 
@@ -903,12 +968,16 @@ def test_worksheet_generation_keeps_the_first_draft_and_levels_the_story(
     """The home page needs the raw draft so a reviewer can see the lift."""
     original = fixture_text("business_register")
 
-    def fake_generate(prompt):
-        if "reading-level editor" in prompt:
-            return _rewrite_json(LEGIT_MILD_REWORD)
-        return _worksheet_json(original)
+    def fake_json(prompt, schema, *, name="response"):
+        if name == "worksheet_questions":
+            return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
+        return _worksheet_obj(original)
 
-    monkeypatch.setattr(ai, "generate_text", fake_generate)
+    def fake_text(prompt):
+        return _rewrite_json(LEGIT_MILD_REWORD)
+
+    monkeypatch.setattr(ai, "generate_json", fake_json)
+    monkeypatch.setattr(ai, "generate_text", fake_text)
     monkeypatch.setattr(ai, "generate_image", lambda prompt: "img")
     monkeypatch.setattr(ai.file, "generate_worksheet_pdf", lambda payload: b"%PDF")
 
@@ -931,12 +1000,16 @@ def test_worksheet_generation_raises_a_too_easy_draft(
     original = fixture_text("easy_primary")
     raised = fixture_text("informational_boiling")
 
-    def fake_generate(prompt):
-        if "reading-level editor" in prompt:
-            return _rewrite_json(raised)
-        return _worksheet_json(original)
+    def fake_json(prompt, schema, *, name="response"):
+        if name == "worksheet_questions":
+            return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
+        return _worksheet_obj(original)
 
-    monkeypatch.setattr(ai, "generate_text", fake_generate)
+    def fake_text(prompt):
+        return _rewrite_json(raised)
+
+    monkeypatch.setattr(ai, "generate_json", fake_json)
+    monkeypatch.setattr(ai, "generate_text", fake_text)
     monkeypatch.setattr(ai, "generate_image", lambda prompt: "img")
     monkeypatch.setattr(ai.file, "generate_worksheet_pdf", lambda payload: b"%PDF")
 
