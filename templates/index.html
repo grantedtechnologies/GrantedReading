@@ -745,6 +745,29 @@
       margin-top: 4px;
     }
 
+    .mobile-image-ready {
+      display: flex !important;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 16px;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 14px;
+    }
+    .mobile-image-ready[hidden] { display: none !important; }
+    .mobile-image-ready .btn-view {
+      width: 100%;
+      max-width: 280px;
+      margin-top: 4px;
+    }
+
     #pdf-section {
       gap: 14px;
       min-width: 0;
@@ -835,6 +858,7 @@
   }
 
   .mobile-pdf-ready { display: none; }
+  .mobile-image-ready { display: none; }
 
   .pdf-fullscreen {
     position: fixed;
@@ -897,6 +921,35 @@
     color: var(--muted);
     text-align: center;
     padding: 24px 12px;
+  }
+
+  .image-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: #111;
+    display: flex;
+    flex-direction: column;
+  }
+  .image-fullscreen[hidden] { display: none !important; }
+  .image-fullscreen-body {
+    flex: 1;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    background: #222;
+  }
+  .image-fullscreen-body img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 6px;
+    background: #fff;
   }
 </style>
 </head>
@@ -1163,6 +1216,19 @@
         </div>
         <div id="review-questions"></div>
 
+        <div class="mobile-image-ready" id="mobile-image-ready" hidden>
+          <div class="mobile-pdf-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3aaa35" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <path d="M21 15l-5-5L5 21"/>
+            </svg>
+          </div>
+          <p class="mobile-pdf-title">Illustration ready</p>
+          <p class="mobile-pdf-note">Want to see the picture? It opens full screen so you can check the details.</p>
+          <button type="button" class="btn-view" id="view-image-btn" onclick="openImageFullscreen()">View illustration</button>
+        </div>
+
         <div class="image-feedback-section">
           <div class="field-label-row">
             <label for="image-feedback">Illustration feedback (optional)</label>
@@ -1189,6 +1255,15 @@
     <a id="fullscreen-open-btn" class="btn-view" target="_blank" rel="noopener">Open</a>
   </div>
   <div class="pdf-fullscreen-pages" id="pdf-fullscreen-pages"></div>
+</div>
+
+<div class="image-fullscreen" id="image-fullscreen" hidden>
+  <div class="pdf-fullscreen-bar">
+    <button type="button" class="btn-secondary" onclick="closeImageFullscreen()">Done</button>
+  </div>
+  <div class="image-fullscreen-body">
+    <img id="fullscreen-image" alt="Worksheet illustration" />
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -1268,6 +1343,14 @@
     return msg || "Something went wrong. Try again.";
   }
 
+  function restoreDownloadLabel() {
+    const label = document.getElementById("download-label");
+    if (!label) return;
+    label.innerHTML =
+      '<span class="dl-full">Download</span>' +
+      '<span class="dl-stack" aria-hidden="true"><span>Down</span><span>load</span></span>';
+  }
+
   async function saveAndDownload(event) {
     const link = document.getElementById("download-btn");
     if (!currentGenerationId) return;
@@ -1281,19 +1364,34 @@
       if (!response.ok) {
         throw new Error(await errorFromResponse(response));
       }
-      const url = URL.createObjectURL(await response.blob());
-      const temp = document.createElement("a");
-      temp.href = url;
-      temp.download = link.download || "worksheet.pdf";
-      document.body.appendChild(temp);
-      temp.click();
-      temp.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      if (isMobileWorksheet()) {
+        // Open the PDF in a new tab so the generator stays on Preview.
+        const opened = window.open(url, "_blank");
+        if (!opened) {
+          // Popup blocked — fall back to a same-tab download.
+          const temp = document.createElement("a");
+          temp.href = url;
+          temp.download = link.download || "worksheet.pdf";
+          document.body.appendChild(temp);
+          temp.click();
+          temp.remove();
+        }
+      } else {
+        const temp = document.createElement("a");
+        temp.href = url;
+        temp.download = link.download || "worksheet.pdf";
+        document.body.appendChild(temp);
+        temp.click();
+        temp.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (err) {
       showError(friendlyError(err));
     } finally {
       downloadInFlight = false;
-      label.textContent = "Download";
+      restoreDownloadLabel();
     }
   }
   document.getElementById("download-btn").addEventListener("click", saveAndDownload);
@@ -1636,6 +1734,35 @@
     }
   }
 
+  function syncMobileImageReady() {
+    const ready = document.getElementById("mobile-image-ready");
+    if (!ready) return;
+    const show = isMobileWorksheet() && !!currentImageBase64;
+    ready.hidden = !show;
+  }
+
+  function openImageFullscreen() {
+    if (!currentImageBase64) return;
+    const overlay = document.getElementById("image-fullscreen");
+    const img = document.getElementById("fullscreen-image");
+    if (!overlay || !img) return;
+    const raw = currentImageBase64.startsWith("data:")
+      ? currentImageBase64
+      : `data:image/png;base64,${currentImageBase64}`;
+    img.src = raw;
+    overlay.hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeImageFullscreen() {
+    const overlay = document.getElementById("image-fullscreen");
+    if (!overlay) return;
+    overlay.hidden = true;
+    const img = document.getElementById("fullscreen-image");
+    if (img) img.removeAttribute("src");
+    document.body.style.overflow = "";
+  }
+
   function showWorksheetResult(data) {
     const questions = {};
     questionEntries(data.content?.questions || {}).forEach(([number, text]) => {
@@ -1651,11 +1778,20 @@
     currentGenerationId = data.generation_id || null;
     populateReviewPanel(reviewContent);
     showPdfFromBase64(data.pdf_base64, reviewContent.title);
+    syncMobileImageReady();
 
     const editOpen = document.getElementById("review-form").style.display === "flex";
-
     document.getElementById("review-empty").style.display = "none";
-    if (editOpen) {
+    document.getElementById("image-feedback").value = "";
+    unlockMobileSteps(true);
+
+    if (isMobileWorksheet()) {
+      // Keep the edit form ready, but return to Preview so they can see the result.
+      document.getElementById("review-ready").style.display = "none";
+      document.getElementById("review-form").style.display = "flex";
+      document.getElementById("review-intro").style.display = "block";
+      setMobileStep("preview");
+    } else if (editOpen) {
       document.getElementById("review-ready").style.display = "none";
       document.getElementById("review-form").style.display = "flex";
       document.getElementById("review-intro").style.display = "block";
@@ -1664,15 +1800,13 @@
       document.getElementById("review-form").style.display = "none";
       document.getElementById("review-intro").style.display = "none";
     }
-    document.getElementById("image-feedback").value = "";
-    unlockMobileSteps(true);
-    setMobileStep(editOpen && isMobileWorksheet() ? "review" : "preview");
   }
 
   function openEditPanel(advanceStep = true) {
     document.getElementById("review-ready").style.display = "none";
     document.getElementById("review-form").style.display = "flex";
     document.getElementById("review-intro").style.display = "block";
+    syncMobileImageReady();
     if (advanceStep) setMobileStep("review");
   }
 
@@ -2029,10 +2163,12 @@
     reviewContent = null;
     fullscreenPdfRenderToken += 1;
     closePdfFullscreen();
+    closeImageFullscreen();
 
     document.getElementById("pdf-section").style.display = "none";
     document.getElementById("preview-empty").style.display = "flex";
     document.getElementById("mobile-pdf-ready").hidden = true;
+    document.getElementById("mobile-image-ready").hidden = true;
     document.getElementById("pdf-frame").removeAttribute("src");
     document.getElementById("review-empty").style.display = "flex";
     document.getElementById("review-ready").style.display = "none";
@@ -2055,7 +2191,10 @@
     }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closePdfFullscreen();
+    if (e.key === "Escape") {
+      closePdfFullscreen();
+      closeImageFullscreen();
+    }
   });
 
   function showError(msg) {
