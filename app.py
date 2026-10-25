@@ -2098,8 +2098,20 @@ def _stash_or_none(teacher_id, pdf_bytes, record):
 
 
 def _log_generation_failure(teacher_id, status_code, error_message):
+    """Failed /generate. No worksheet row yet, so entity and entity id stay empty."""
     events.log_event(
         events.WORKSHEET_GENERATED,
+        teacher_id=teacher_id,
+        success=False,
+        status_code=status_code,
+        error_message=error_message,
+    )
+
+
+def _log_update_failure(teacher_id, status_code, error_message):
+    """Failed /update-pdf. Entity stays empty when no new version was saved."""
+    events.log_event(
+        events.WORKSHEET_UPDATED,
         teacher_id=teacher_id,
         success=False,
         status_code=status_code,
@@ -2358,11 +2370,13 @@ def update_pdf():
     if source != "edit" and not is_pro:
         try:
             if cache.worksheet_quota_used(teacher_id):
+                _log_update_failure(teacher_id, 429, "quota_exceeded")
                 return jsonify({
                     "error": "Standard includes one worksheet a day. Upgrade to Pro for more.",
                 }), 429
         except Exception:
             app.logger.exception("Redis quota check failed")
+            _log_update_failure(teacher_id, 503, "update_failed")
             return jsonify({"error": "Could not check your daily worksheet limit."}), 503
 
     try:
@@ -2385,6 +2399,11 @@ def update_pdf():
             "generation_id": _restash_edited_generation(body, pdf_bytes, source),
         })
     except Exception as exc:
+        timed_out = isinstance(exc, (TimeoutError, RequestsTimeout)) or "timeout" in str(type(exc).__name__).lower()
+        if timed_out:
+            _log_update_failure(teacher_id, 504, "llm_timeout")
+            return jsonify({"error": ai.user_error_message(exc)}), 504
+        _log_update_failure(teacher_id, 500, "update_failed")
         hitting_flux = bool((body.get("image_feedback") or "").strip()) or not bool(
             (body.get("image_base64") or "").strip()
         )

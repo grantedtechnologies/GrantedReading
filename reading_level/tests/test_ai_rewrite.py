@@ -523,7 +523,7 @@ def mock_generate(monkeypatch):
             calls.append(prompt)
             return _next()
 
-        def fake_json(prompt, schema, *, name="response"):
+        def fake_json(prompt, schema, *, name="response", system=None):
             calls.append(prompt)
             raw = _next()
             return json.loads(raw) if isinstance(raw, str) else raw
@@ -814,34 +814,50 @@ def test_parse_questions_output_respects_count():
     assert parsed == {"q1": "One?", "q2": "Two?"}
 
 
-def test_generate_json_asks_the_api_for_a_strict_schema(monkeypatch):
+def test_generate_json_uses_chat_completions_strict_schema(monkeypatch):
     captured = {}
 
-    class FakeResponses:
+    class FakeCompletions:
         def create(self, **kwargs):
             captured.update(kwargs)
             return SimpleNamespace(
-                output_text=json.dumps({"questions": {"q1": "One?", "q2": "Two?"}})
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=json.dumps(
+                                {"questions": {"q1": "One?", "q2": "Two?"}}
+                            )
+                        )
+                    )
+                ]
             )
 
+    class FakeChat:
+        completions = FakeCompletions()
+
     class FakeClient:
-        responses = FakeResponses()
+        chat = FakeChat()
 
     monkeypatch.setattr(ai, "ensure_ai_configured", lambda: None)
-    monkeypatch.setattr(ai, "_get_openai_client", lambda: (None, FakeClient()))
+    monkeypatch.setattr(ai, "_get_structured_client", lambda: FakeClient())
+    monkeypatch.setattr(ai, "_structured_model_name", lambda: "DeepSeek-V4-Flash")
 
     data = ai.generate_json(
         "write questions",
         ai._questions_json_schema(2),
         name="worksheet_questions",
+        system="Return JSON only.",
     )
 
     assert data == {"questions": {"q1": "One?", "q2": "Two?"}}
-    fmt = captured["text"]["format"]
+    assert captured["model"] == "DeepSeek-V4-Flash"
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][1]["content"] == "write questions"
+    fmt = captured["response_format"]
     assert fmt["type"] == "json_schema"
-    assert fmt["strict"] is True
-    assert fmt["name"] == "worksheet_questions"
-    assert fmt["schema"]["required"] == ["questions"]
+    assert fmt["json_schema"]["strict"] is True
+    assert fmt["json_schema"]["name"] == "worksheet_questions"
+    assert fmt["json_schema"]["schema"]["required"] == ["questions"]
 
 
 def test_dok_level_does_not_change_the_story_or_the_leveler(monkeypatch):
@@ -850,7 +866,7 @@ def test_dok_level_does_not_change_the_story_or_the_leveler(monkeypatch):
     leveler_stories = []
     story = "Sam ran to the park. The sun was hot."
 
-    def fake_json(prompt, schema, *, name="response"):
+    def fake_json(prompt, schema, *, name="response", system=None):
         if name == "worksheet_questions" or "DOK" in prompt:
             level = "1" if "Recall & Reproduction" in prompt else "3"
             return {
@@ -906,7 +922,7 @@ def test_focus_phonics_protects_matching_words_from_the_leveler(monkeypatch):
             failure_reason=None,
         )
 
-    def fake_json(prompt, schema, *, name="response"):
+    def fake_json(prompt, schema, *, name="response", system=None):
         if name == "worksheet_questions":
             return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
         return _worksheet_obj(
@@ -945,7 +961,7 @@ def test_focus_vocabulary_is_protected_from_the_leveler(monkeypatch, fixture_tex
             failure_reason=None,
         )
 
-    def fake_json(prompt, schema, *, name="response"):
+    def fake_json(prompt, schema, *, name="response", system=None):
         if name == "worksheet_questions":
             return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
         return _worksheet_obj(
@@ -968,7 +984,7 @@ def test_worksheet_generation_keeps_the_first_draft_and_levels_the_story(
     """The home page needs the raw draft so a reviewer can see the lift."""
     original = fixture_text("business_register")
 
-    def fake_json(prompt, schema, *, name="response"):
+    def fake_json(prompt, schema, *, name="response", system=None):
         if name == "worksheet_questions":
             return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
         return _worksheet_obj(original)
@@ -1000,7 +1016,7 @@ def test_worksheet_generation_raises_a_too_easy_draft(
     original = fixture_text("easy_primary")
     raised = fixture_text("informational_boiling")
 
-    def fake_json(prompt, schema, *, name="response"):
+    def fake_json(prompt, schema, *, name="response", system=None):
         if name == "worksheet_questions":
             return {"questions": {f"q{i}": f"Question {i}?" for i in range(1, 6)}}
         return _worksheet_obj(original)

@@ -528,6 +528,194 @@
     cursor: pointer; transition: background 0.15s;
   }
   .btn-retry:hover { background: #e09415; }
+
+  .ws-steps { display: none; }
+  .ws-back { display: none; }
+  .mobile-only { display: none !important; }
+
+  @media (max-width: 900px) {
+    body { overflow-x: hidden; }
+    .sidebar-fab { display: none; }
+
+    .layout {
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .ws-steps {
+      display: flex;
+      gap: 6px;
+      padding: 12px 16px 0;
+      background: var(--bg);
+      position: sticky;
+      top: var(--header-h);
+      z-index: 40;
+    }
+    .ws-step {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      border: 1.5px solid var(--border);
+      background: var(--white);
+      border-radius: 10px;
+      padding: 8px 6px;
+      cursor: pointer;
+      font-family: var(--font);
+      color: var(--muted);
+    }
+    .ws-step.active {
+      border-color: var(--green);
+      background: var(--green-light);
+      color: var(--green-dark);
+    }
+    .ws-step:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .ws-step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1.5px solid currentColor;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .ws-step.active .ws-step-num {
+      background: var(--green);
+      border-color: var(--green);
+      color: #fff;
+    }
+    .ws-step-label {
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .main {
+      display: block;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .prompt-panel,
+    .preview-panel,
+    .review-panel {
+      display: none;
+      border-right: none;
+      padding: 16px 16px 28px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .main[data-mobile-step="prompt"] .prompt-panel,
+    .main[data-mobile-step="preview"] .preview-panel,
+    .main[data-mobile-step="review"] .review-panel {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-title { font-size: 22px; margin-bottom: 16px; }
+    .form-card { padding: 18px 16px; }
+    .grade-btn { padding: 10px 2px; font-size: 12px; }
+
+    .ws-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      align-self: flex-start;
+      margin-bottom: 12px;
+      border: none;
+      background: none;
+      color: var(--green-dark);
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .desktop-only { display: none !important; }
+    .mobile-only { display: flex !important; }
+
+    /* Phones rarely render PDFs inside iframes. Show an open-in-viewer card. */
+    .pdf-frame-wrap { display: none !important; }
+    .mobile-pdf-ready {
+      display: flex !important;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      text-align: center;
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 20px;
+      min-height: 220px;
+    }
+    .mobile-pdf-ready[hidden] { display: none !important; }
+    .mobile-pdf-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: var(--green-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .mobile-pdf-title {
+      font-family: var(--font);
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--ink);
+      margin: 0;
+      word-break: break-word;
+    }
+    .mobile-pdf-note {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--muted);
+      margin: 0;
+      max-width: 260px;
+    }
+    .mobile-pdf-ready .btn-view {
+      width: 100%;
+      max-width: 280px;
+      margin-top: 4px;
+    }
+
+    #pdf-section {
+      gap: 14px;
+    }
+
+    .pdf-actions {
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 0;
+      position: sticky;
+      bottom: 0;
+      padding: 12px 0 8px;
+      background: linear-gradient(to top, var(--bg) 75%, transparent);
+      z-index: 5;
+    }
+    .pdf-actions .btn-view,
+    .pdf-actions .btn-retry,
+    .pdf-actions .btn-edit-worksheet {
+      width: 100%;
+      flex: none;
+    }
+
+    .review-actions {
+      flex-direction: column;
+    }
+    .review-empty { display: none !important; }
+  }
+
+  .mobile-pdf-ready { display: none; }
 </style>
 </head>
 <body>
@@ -539,7 +727,22 @@
 
   <aside class="sidebar" id="sidebar"></aside>
 
-  <div class="main">
+  <nav class="ws-steps" id="ws-steps" aria-label="Worksheet steps">
+    <button type="button" class="ws-step active" data-step="prompt" aria-current="step">
+      <span class="ws-step-num">1</span>
+      <span class="ws-step-label">Prompt</span>
+    </button>
+    <button type="button" class="ws-step" data-step="preview" disabled>
+      <span class="ws-step-num">2</span>
+      <span class="ws-step-label">Preview</span>
+    </button>
+    <button type="button" class="ws-step" data-step="review" disabled>
+      <span class="ws-step-num">3</span>
+      <span class="ws-step-label">Edit</span>
+    </button>
+  </nav>
+
+  <div class="main" data-mobile-step="prompt">
 
     <div class="prompt-panel">
       <div class="panel-title">Prompt</div>
@@ -705,6 +908,7 @@
     </div>
 
     <div class="preview-panel">
+      <button type="button" class="ws-back" onclick="setMobileStep('prompt')">← Prompt</button>
       <div class="panel-title">Preview</div>
 
       <div class="preview-empty" id="preview-empty">
@@ -723,17 +927,32 @@
         <div class="pdf-frame-wrap">
           <iframe id="pdf-frame" title="Worksheet preview"></iframe>
         </div>
+        <div class="mobile-pdf-ready" id="mobile-pdf-ready" hidden>
+          <div class="mobile-pdf-icon" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3aaa35" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+          </div>
+          <p class="mobile-pdf-title" id="mobile-pdf-title">Worksheet ready</p>
+          <p class="mobile-pdf-note">Open the PDF in your phone’s viewer, then come back here to download or edit.</p>
+          <a id="open-preview-btn" class="btn-view" target="_blank" rel="noopener">Open preview</a>
+        </div>
         <div class="pdf-actions">
           <a id="download-btn" class="btn-view" download="worksheet.pdf">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span id="download-label">Download</span>
           </a>
+          <button class="btn-edit-worksheet mobile-only" type="button" onclick="openEditPanel()">Edit worksheet</button>
           <button class="btn-retry" onclick="resetForm()">Retry</button>
         </div>
       </div>
     </div>
 
     <div class="review-panel">
+      <button type="button" class="ws-back" onclick="setMobileStep('preview')">← Preview</button>
       <div class="panel-title">Review &amp; Edit</div>
 
       <div class="review-empty" id="review-empty">
@@ -790,6 +1009,40 @@
   let reviewContent = null;
   let currentGenerationId = null;
   let downloadInFlight = false;
+
+  function isMobileWorksheet() {
+    return window.matchMedia("(max-width: 900px)").matches;
+  }
+
+  function setMobileStep(step) {
+    const main = document.querySelector(".main");
+    if (!main) return;
+    main.dataset.mobileStep = step;
+    document.querySelectorAll(".ws-step").forEach((btn) => {
+      const on = btn.dataset.step === step;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-current", on ? "step" : "false");
+    });
+    if (step === "review" && reviewContent) {
+      openEditPanel(false);
+    }
+    if (isMobileWorksheet()) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  function unlockMobileSteps(hasPdf) {
+    document.querySelectorAll('.ws-step[data-step="preview"], .ws-step[data-step="review"]').forEach((btn) => {
+      btn.disabled = !hasPdf;
+    });
+  }
+
+  document.querySelectorAll(".ws-step").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      setMobileStep(btn.dataset.step);
+    });
+  });
 
   async function errorFromResponse(response) {
     try {
@@ -1098,10 +1351,17 @@
     if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
     currentBlobUrl = URL.createObjectURL(blob);
 
+    const label = (title || "").trim() || "Worksheet ready";
     const safeName = (title || "worksheet").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "worksheet";
     document.getElementById("pdf-frame").src = currentBlobUrl;
     document.getElementById("download-btn").href = currentBlobUrl;
     document.getElementById("download-btn").download = `${safeName}.pdf`;
+
+    const openBtn = document.getElementById("open-preview-btn");
+    openBtn.href = currentBlobUrl;
+    openBtn.setAttribute("download", `${safeName}.pdf`);
+    document.getElementById("mobile-pdf-title").textContent = label;
+    document.getElementById("mobile-pdf-ready").hidden = false;
 
     document.getElementById("preview-empty").style.display = "none";
     document.getElementById("pdf-section").style.display = "flex";
@@ -1136,12 +1396,15 @@
       document.getElementById("review-intro").style.display = "none";
     }
     document.getElementById("image-feedback").value = "";
+    unlockMobileSteps(true);
+    setMobileStep(editOpen && isMobileWorksheet() ? "review" : "preview");
   }
 
-  function openEditPanel() {
+  function openEditPanel(advanceStep = true) {
     document.getElementById("review-ready").style.display = "none";
     document.getElementById("review-form").style.display = "flex";
     document.getElementById("review-intro").style.display = "block";
+    if (advanceStep) setMobileStep("review");
   }
 
   function gradeValue(level) {
@@ -1497,6 +1760,8 @@
 
     document.getElementById("pdf-section").style.display = "none";
     document.getElementById("preview-empty").style.display = "flex";
+    document.getElementById("mobile-pdf-ready").hidden = true;
+    document.getElementById("pdf-frame").removeAttribute("src");
     document.getElementById("review-empty").style.display = "flex";
     document.getElementById("review-ready").style.display = "none";
     document.getElementById("review-form").style.display = "none";
@@ -1507,6 +1772,8 @@
     const btn = document.getElementById("generate-btn");
     btn.disabled = false;
     btn.innerHTML = "Generate";
+    unlockMobileSteps(false);
+    setMobileStep("prompt");
   }
 
   function showError(msg) {

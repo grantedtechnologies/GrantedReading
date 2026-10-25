@@ -528,6 +528,29 @@ def test_generation_timeout_and_unverified_login(mysql, monkeypatch):
         success=0,
     )
 
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("foundry rejected the request")
+
+    monkeypatch.setattr(app_module.ai, "build_pdf_bytes", boom)
+    before = _max_event_id()
+    updated = client.post("/update-pdf", json={
+        "title": "Sample",
+        "story": "A short story.",
+        "questions": {"q1": "Who ran?", "q2": "What happened?", "q3": "Where?", "q4": "When?", "q5": "Why?"},
+        "image_base64": "abc",
+    })
+    assert updated.status_code == 500
+    _expect_one(
+        before,
+        eventType="worksheet_updated",
+        teacherid=maya["teacher_id"],
+        entity=None,
+        entityid=None,
+        statusCode=500,
+        errorMessage="update_failed",
+        success=0,
+    )
+
     unverified_email = f"una.{_max_event_id()}@granted.local"
     with db.engine.begin() as conn:
         conn.execute(

@@ -136,7 +136,18 @@
     color: var(--green-dark, #2d8a29);
   }
   @media (max-width: 640px) {
-    nav.topnav .logo-img { height: 53px; }
+    :root { --header-h: 72px; }
+    nav.topnav {
+      height: var(--header-h);
+      padding: 0 12px;
+    }
+    nav.topnav .logo-img { height: 48px; }
+    nav.topnav .user-name { display: none; }
+    nav.topnav .topnav-right { gap: 8px; }
+    .nav-drawer,
+    .nav-backdrop {
+      top: var(--header-h);
+    }
   }
   .nav-drawer {
     position: fixed;

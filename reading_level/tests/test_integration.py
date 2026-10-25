@@ -38,7 +38,7 @@ def mock_llm(monkeypatch):
             calls.append(prompt)
             return _worksheet_json(story)
 
-        def fake_generate_json(prompt, schema, *, name="response"):
+        def fake_generate_json(prompt, schema, *, name="response", system=None):
             calls.append(prompt)
             return json.loads(_worksheet_json(story))
 

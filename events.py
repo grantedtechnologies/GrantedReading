@@ -16,6 +16,7 @@ VOCAB_LIST_CREATED = "vocab_list_created"
 VOCAB_LIST_UPDATED = "vocab_list_updated"
 VOCAB_LIST_DELETED = "vocab_list_deleted"
 WORKSHEET_GENERATED = "worksheet_generated"
+WORKSHEET_UPDATED = "worksheet_updated"
 WORKSHEET_DOWNLOADED = "worksheet_downloaded"
 
 EVENT_TYPES = frozenset({
@@ -27,6 +28,7 @@ EVENT_TYPES = frozenset({
     VOCAB_LIST_UPDATED,
     VOCAB_LIST_DELETED,
     WORKSHEET_GENERATED,
+    WORKSHEET_UPDATED,
     WORKSHEET_DOWNLOADED,
 })
 

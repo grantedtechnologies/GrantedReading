@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "").rstrip("/")
 LLM_AGENT_NAME = os.getenv("LLM_AGENT_NAME", "")
+# Optional. When unset, worksheet JSON calls use the model named on the agent
+# (for example DeepSeek-V4-Flash) through the project OpenAI endpoint.
+LLM_MODEL = (os.getenv("LLM_MODEL") or "").strip()
 FLUX_API_KEY = os.getenv("FLUX_API_KEY", "")
 FLUX_API_URL = os.getenv("FLUX_API_URL", "")
 FLUX_MODEL = os.getenv("FLUX_MODEL", "")
@@ -742,6 +745,10 @@ def generate_worksheet_questions(
         prompt,
         _questions_json_schema(count),
         name="worksheet_questions",
+        system=(
+            "You write reading comprehension questions for special education "
+            "worksheets. Return only JSON that matches the required schema."
+        ),
     )
     questions = parse_questions_output(json.dumps(data), count)
     for level in levels:
@@ -749,9 +756,10 @@ def generate_worksheet_questions(
     return questions
 
 
-def build_worksheet_prompt(
+def build_worksheet_user_prompt(
     grade, reading_level, interests, focus_vocabulary=None, focus_phonics=None
 ):
+    """User half of the worksheet request. System instructions stay separate."""
     user_prompt = (
         f"I have a student who is in {grade} grade and reads at a "
         f"{reading_level} grade level. {interests}"
@@ -772,6 +780,19 @@ def build_worksheet_prompt(
             f"naturally so the reader practices the pattern. Do not avoid "
             f"a word just because it contains the pattern."
         )
+    return user_prompt
+
+
+def build_worksheet_prompt(
+    grade, reading_level, interests, focus_vocabulary=None, focus_phonics=None
+):
+    user_prompt = build_worksheet_user_prompt(
+        grade,
+        reading_level,
+        interests,
+        focus_vocabulary=focus_vocabulary,
+        focus_phonics=focus_phonics,
+    )
     return f"{WORKSHEET_SYSTEM_PROMPT}\n\nUser request:\n{user_prompt}"
 
 
@@ -879,6 +900,8 @@ def normalize_model_output(data):
 _client_lock = threading.Lock()
 _project_client = None
 _openai_client = None
+_structured_client = None
+_structured_model = None
 
 
 def _get_openai_client():
@@ -894,15 +917,61 @@ def _get_openai_client():
         endpoint = _llm_endpoint()
         logger.info("Azure project endpoint: %s", endpoint)
         _project_client = AIProjectClient(
-    endpoint=endpoint,
-    credential=foundry_credential(),
-    allow_preview=True,
-)
+            endpoint=endpoint,
+            credential=foundry_credential(),
+            allow_preview=True,
+        )
         _openai_client = _project_client.get_openai_client(
             agent_name=LLM_AGENT_NAME,
             timeout=None,
         )
         return _project_client, _openai_client
+
+
+def _get_structured_client():
+    """OpenAI client on the project endpoint (no agent).
+
+    Foundry agents only expose the Responses protocol and reject structured
+    ``response_format`` / ``text.format``. Worksheet JSON calls use this
+    client against the agent's model deployment instead.
+    """
+    global _structured_client
+    project, _ = _get_openai_client()
+    if _structured_client is not None:
+        return _structured_client
+    with _client_lock:
+        if _structured_client is None:
+            _structured_client = project.get_openai_client(timeout=None)
+        return _structured_client
+
+
+def _structured_model_name():
+    """Deployment used for enforced JSON. Prefer LLM_MODEL, else the agent's model."""
+    global _structured_model
+    if LLM_MODEL:
+        return LLM_MODEL
+    if _structured_model:
+        return _structured_model
+    with _client_lock:
+        if _structured_model:
+            return _structured_model
+        project, _ = _get_openai_client()
+        details = project.agents.get(agent_name=LLM_AGENT_NAME)
+        payload = details.as_dict() if hasattr(details, "as_dict") else dict(details)
+        model = (
+            payload.get("versions", {})
+            .get("latest", {})
+            .get("definition", {})
+            .get("model")
+        )
+        if not model:
+            raise RuntimeError(
+                "Could not find the writing model on the Foundry agent. "
+                "Set LLM_MODEL to the deployment name."
+            )
+        _structured_model = str(model)
+        logger.info("Worksheet JSON model: %s", _structured_model)
+        return _structured_model
 
 
 def generate_text(prompt):
@@ -957,40 +1026,64 @@ def _questions_json_schema(question_count=5) -> dict:
     }
 
 
-def generate_json(prompt, schema, *, name="response") -> dict:
-    """Model call with an API-enforced JSON schema. Returns the parsed object."""
-    ensure_ai_configured()
+def _parse_json_object(raw_text) -> dict | None:
+    """Pull a JSON object out of a model reply, including fenced markdown."""
+    if raw_text is None or not str(raw_text).strip():
+        return None
+    text = str(raw_text).strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
     try:
-        _, openai_client = _get_openai_client()
-        response = openai_client.responses.create(
-            input=prompt,
-            text={
-                "format": {
-                    "type": "json_schema",
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def generate_json(prompt, schema, *, name="response", system=None) -> dict:
+    """Enforced JSON via chat.completions response_format (strict schema).
+
+    Used for worksheet story/questions replies that feed the PDF HTML. Rewrites
+    still use generate_text through the agent.
+    """
+    ensure_ai_configured()
+    messages = [
+        {
+            "role": "system",
+            "content": system
+            or "Return only valid JSON that matches the required schema.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        client = _get_structured_client()
+        response = client.chat.completions.create(
+            model=_structured_model_name(),
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
                     "name": name,
                     "strict": True,
                     "schema": schema,
-                }
+                },
             },
         )
     except Exception as exc:
         raise RuntimeError(user_error_message(exc, "foundry")) from exc
-    text = response.output_text
-    if text is None or not str(text).strip():
-        raise RuntimeError(FOUNDRY_DOWN)
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "The writing assistant returned a response that could not be read. "
-            "Try generating again."
-        ) from exc
-    if not isinstance(data, dict):
-        raise RuntimeError(
-            "The writing assistant returned a response that could not be read. "
-            "Try generating again."
-        )
-    return data
+        content = response.choices[0].message.content
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise RuntimeError(FOUNDRY_DOWN) from exc
+    data = _parse_json_object(content)
+    if data is not None:
+        return data
+    if name in ("worksheet", "leveled_passage"):
+        return parse_worksheet_output(content or "")
+    raise RuntimeError(
+        "The writing assistant returned a response that could not be read. "
+        "Try generating again."
+    )
 
 
 def generate_image(image_prompt):
@@ -1118,7 +1211,7 @@ def _parse_worksheet_text(output_text):
 def generate_worksheet_content(
     grade, reading_level, interests, focus_vocabulary=None, focus_phonics=None
 ):
-    prompt = build_worksheet_prompt(
+    prompt = build_worksheet_user_prompt(
         grade,
         reading_level,
         interests,
@@ -1129,6 +1222,7 @@ def generate_worksheet_content(
         prompt,
         _worksheet_json_schema(5),
         name="worksheet",
+        system=WORKSHEET_SYSTEM_PROMPT,
     )
     validate_structure(model_data)
     return model_data, json.dumps(model_data)
