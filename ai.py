@@ -34,32 +34,39 @@ FLUX_API_KEY = os.getenv("FLUX_API_KEY", "")
 FLUX_API_URL = os.getenv("FLUX_API_URL", "")
 FLUX_MODEL = os.getenv("FLUX_MODEL", "")
 
-WORKSHEET_SYSTEM_PROMPT = """You are a reading comprehension worksheet generator for special education teachers.
+# Keep story short enough that title + illustration + questions fit on one A4 page.
+STORY_MAX_CHARS = 900
+QUESTION_MAX_CHARS = 140
+TITLE_MAX_CHARS = 60
 
-Given information about a student (grade, reading level, and interests), write a short fiction story and five reading comprehension questions.
+WORKSHEET_SYSTEM_PROMPT = f"""You are a reading comprehension worksheet generator for special education teachers.
+
+Given information about a student (grade, reading level, and interests), write a short fiction story and reading comprehension questions.
 
 Rules:
 - Write the story at the student's READING LEVEL (not their grade level).
 - Incorporate the student's interests naturally into the story.
 - Keep the story engaging and age-appropriate for the student's grade.
-- Write exactly 5 ordinary comprehension questions about the story. Do not force a Who / What / When / Where / Why template — pick stems that fit the story.
+- Write ordinary comprehension questions about the story. Do not force a Who / What / When / Where / Why template — pick stems that fit the story.
 - Each question must end with a question mark and be answerable from the story.
 - The story must be one paragraph with no line breaks.
+- The finished worksheet must fit on ONE printed page. Keep the story under {STORY_MAX_CHARS} characters (about 150–170 words). Keep the title under {TITLE_MAX_CHARS} characters. Keep each question under {QUESTION_MAX_CHARS} characters.
+- Do not include notes, analysis, rewriting steps, or thinking — only the final title, story, and questions.
 - If a focus vocabulary word is given, use that exact word 3 to 5 times in the story. Weave it in naturally so the reader meets it in context. Do not replace it with a simpler synonym.
 - If a phonics pattern is given, include 3 to 5 different words that contain that exact letter pattern (for example, "tion" in station, mention, action). Use those words naturally so the reader practices the pattern.
 
 Respond with ONLY valid JSON (no markdown, no extra text) in this exact shape:
-{
+{{
   "title": "Story title",
   "story": "The full story text",
-  "questions": {
+  "questions": {{
     "q1": "...?",
     "q2": "...?",
     "q3": "...?",
     "q4": "...?",
     "q5": "...?"
-  }
-}"""
+  }}
+}}"""
 
 
 def _llm_endpoint():
@@ -762,7 +769,9 @@ def build_worksheet_user_prompt(
     """User half of the worksheet request. System instructions stay separate."""
     user_prompt = (
         f"I have a student who is in {grade} grade and reads at a "
-        f"{reading_level} grade level. {interests}"
+        f"{reading_level} grade level. {interests} "
+        f"Keep the story under {STORY_MAX_CHARS} characters so the worksheet "
+        f"fits on one page."
     )
     terms = list(focus_vocabulary or [])
     if terms:
@@ -887,13 +896,21 @@ def validate_structure(data):
     return True
 
 
+def _clip_chars(text, limit):
+    value = " ".join(str(text or "").split())
+    if len(value) <= limit:
+        return value
+    clipped = value[: max(0, limit - 1)].rstrip(" ,;:-")
+    return f"{clipped}…"
+
+
 def normalize_model_output(data):
     payload = {
-        "Title": data["title"],
-        "Story": data["story"],
+        "Title": _clip_chars(data["title"], TITLE_MAX_CHARS),
+        "Story": _clip_chars(data["story"], STORY_MAX_CHARS),
     }
     for index, (_key, stem) in enumerate(ordered_question_items(data.get("questions")), start=1):
-        payload[f"Q{index}"] = stem
+        payload[f"Q{index}"] = _clip_chars(stem, QUESTION_MAX_CHARS)
     return payload
 
 

@@ -6,12 +6,12 @@ import tempfile
 
 import pymupdf as fitz
 
-PAGE_MARGIN = 40
+PAGE_MARGIN = 36
 STORY_COL_WIDTH = 280
-IMAGE_WIDTH = 200
-IMAGE_HEIGHT = 200
-IMAGE_TOP = 125
-IMAGE_RIGHT_MARGIN = 40
+IMAGE_WIDTH = 180
+IMAGE_HEIGHT = 180
+IMAGE_TOP = 118
+IMAGE_RIGHT_MARGIN = 36
 LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo.png")
 LOGO_DISPLAY_WIDTH = 84
 LOGO_DISPLAY_HEIGHT = LOGO_DISPLAY_WIDTH * (343 / 872)
@@ -22,14 +22,14 @@ WORKSHEET_CSS = """
 body {
   font-family: Helvetica, Arial, sans-serif;
   font-size: 11pt;
-  line-height: 1.45;
+  line-height: 1.4;
   color: #1a1a1a;
 }
 
 .meta-table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .meta-table td {
@@ -37,26 +37,26 @@ body {
 }
 
 .meta-label {
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .meta-line {
   border-bottom: 1px solid #1a1a1a;
-  height: 14px;
+  height: 12px;
   width: 95%;
 }
 
 .title {
   text-align: center;
-  font-size: 18pt;
+  font-size: 16pt;
   font-weight: 700;
-  margin: 6px 0 14px 0;
+  margin: 4px 0 10px 0;
 }
 
 .story-table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .story-table td {
@@ -64,23 +64,23 @@ body {
 }
 
 .story-col {
-  width: 280px;
-  padding-right: 16px;
+  width: 300px;
+  padding-right: 14px;
   font-size: 11pt;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .image-col {
-  width: 200px;
+  width: 180px;
 }
 
 .image-slot {
-  width: 200px;
-  height: 200px;
+  width: 180px;
+  height: 180px;
 }
 
 .question {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .question-number {
@@ -93,27 +93,128 @@ body {
 
 .answer-line {
   border-bottom: 1px solid #9ca3af;
-  height: 22px;
-  margin-top: 6px;
+  height: 18px;
+  margin-top: 4px;
 }
 
 .instructions {
   font-style: italic;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .ignore-line {
   color: #6b7280;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .asset {
-  margin: 12px 0;
+  margin: 10px 0;
 }
 
 .asset img {
-  max-width: 240px;
-  max-height: 240px;
+  max-width: 180px;
+  max-height: 180px;
+}
+"""
+
+# Tighter stylesheet used when the default layout spills onto a second page.
+WORKSHEET_CSS_COMPACT = """
+body {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.3;
+  color: #1a1a1a;
+}
+
+.meta-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 6px;
+}
+
+.meta-table td {
+  vertical-align: top;
+}
+
+.meta-label {
+  margin-bottom: 2px;
+  font-size: 9pt;
+}
+
+.meta-line {
+  border-bottom: 1px solid #1a1a1a;
+  height: 10px;
+  width: 95%;
+}
+
+.title {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: 700;
+  margin: 2px 0 8px 0;
+}
+
+.story-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.story-table td {
+  vertical-align: top;
+}
+
+.story-col {
+  width: 320px;
+  padding-right: 12px;
+  font-size: 10pt;
+  line-height: 1.3;
+}
+
+.image-col {
+  width: 150px;
+}
+
+.image-slot {
+  width: 150px;
+  height: 150px;
+}
+
+.question {
+  margin-bottom: 7px;
+}
+
+.question-number {
+  font-weight: 700;
+}
+
+.question-text {
+  font-weight: 400;
+}
+
+.answer-line {
+  border-bottom: 1px solid #9ca3af;
+  height: 15px;
+  margin-top: 3px;
+}
+
+.instructions {
+  font-style: italic;
+  margin-bottom: 8px;
+}
+
+.ignore-line {
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+
+.asset {
+  margin: 8px 0;
+}
+
+.asset img {
+  max-width: 150px;
+  max-height: 150px;
 }
 """
 
@@ -217,8 +318,17 @@ def build_worksheet_html(data, include_image_slot=False):
     """
 
 
-def _render_html_to_pdf(worksheet_html, archive=None):
-    story = fitz.Story(html=worksheet_html, user_css=WORKSHEET_CSS, archive=archive)
+def _pdf_page_count(pdf_bytes):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
+
+
+def _render_html_to_pdf(worksheet_html, archive=None, user_css=None):
+    css = user_css or WORKSHEET_CSS
+    story = fitz.Story(html=worksheet_html, user_css=css, archive=archive)
 
     fd, path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
@@ -226,10 +336,11 @@ def _render_html_to_pdf(worksheet_html, archive=None):
     try:
         writer = fitz.DocumentWriter(path)
         mediabox = fitz.paper_rect("a4")
+        margin = PAGE_MARGIN
         content_rect = fitz.Rect(
-            mediabox.x0 + PAGE_MARGIN,
-            mediabox.y0 + PAGE_MARGIN,
-            mediabox.x1 - PAGE_MARGIN,
+            mediabox.x0 + margin,
+            mediabox.y0 + margin,
+            mediabox.x1 - margin,
             mediabox.y1 - FOOTER_RESERVE,
         )
 
@@ -263,17 +374,22 @@ def _stamp_logo(pdf_bytes):
     return doc.tobytes()
 
 
-def _image_rect(page):
+def _image_rect(page, size=None):
+    side = size or IMAGE_WIDTH
     x1 = page.rect.width - IMAGE_RIGHT_MARGIN
-    x0 = x1 - IMAGE_WIDTH
+    x0 = x1 - side
     y0 = IMAGE_TOP
-    return fitz.Rect(x0, y0, x1, y0 + IMAGE_HEIGHT)
+    return fitz.Rect(x0, y0, x1, y0 + side)
 
 
-def _insert_image_on_first_page(pdf_bytes, image_bytes):
+def _insert_image_on_first_page(pdf_bytes, image_bytes, size=None):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page = doc[0]
-    page.insert_image(_image_rect(page), stream=image_bytes, keep_proportion=True)
+    page.insert_image(
+        _image_rect(page, size=size),
+        stream=image_bytes,
+        keep_proportion=True,
+    )
     return doc.tobytes()
 
 
@@ -447,8 +563,16 @@ def generate_worksheet_pdf(data):
     image_bytes = decode_image_bytes(data)
     worksheet_html = build_worksheet_html(data, include_image_slot=bool(image_bytes))
     pdf_bytes = _render_html_to_pdf(worksheet_html)
+    image_size = IMAGE_WIDTH
+
+    # Prefer a single page: retry with compact spacing if content overflowed.
+    if _pdf_page_count(pdf_bytes) > 1:
+        compact_pdf = _render_html_to_pdf(worksheet_html, user_css=WORKSHEET_CSS_COMPACT)
+        if _pdf_page_count(compact_pdf) <= _pdf_page_count(pdf_bytes):
+            pdf_bytes = compact_pdf
+            image_size = 150
 
     if image_bytes:
-        pdf_bytes = _insert_image_on_first_page(pdf_bytes, image_bytes)
+        pdf_bytes = _insert_image_on_first_page(pdf_bytes, image_bytes, size=image_size)
 
     return pdf_bytes

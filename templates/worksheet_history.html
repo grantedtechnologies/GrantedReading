@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Granted Reading — Worksheet History</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,6 +14,7 @@
     --green: #3aaa35;
     --green-dark: #2d8a29;
     --green-light: #eaf7e9;
+    --gold: #f5a623;
     --ink: #1a1a1a;
     --muted: #6b7280;
     --border: #e5e7eb;
@@ -77,10 +78,12 @@
   .page {
     margin: var(--header-h) auto 0;
     padding: 28px 28px 64px;
-    max-width: 1180px;
+    max-width: 900px;
     width: 100%;
   }
-  .library { display: block; }
+  .page-title { font-family: var(--font); font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+  .lead { font-size: 16px; line-height: 1.6; color: var(--muted); margin-bottom: 22px; }
+
   .filter-bar {
     display: grid;
     grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(180px, 1.2fr);
@@ -100,58 +103,110 @@
   .filter-bar input:focus,
   .filter-bar select:focus { outline: none; border-color: var(--green); }
   .filter-bar select:disabled { color: var(--muted); background: #f9fafb; }
-  .library-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
-  .layout-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--white); }
-  .layout-btn {
-    width: 36px; height: 32px;
-    border: none; background: var(--white); color: var(--muted);
-    cursor: pointer; display: flex; align-items: center; justify-content: center;
-  }
-  .layout-btn + .layout-btn { border-left: 1px solid var(--border); }
-  .layout-btn.selected { background: var(--green-light); color: var(--ink); }
-  .layout-btn svg { width: 16px; height: 16px; }
-  .sheets.layout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
-  .sheets.layout-column { display: flex; flex-direction: column; gap: 16px; }
-  .layout-column .grid-only { display: none; }
-  .layout-grid .column-only { display: none; }
-  .layout-grid .card { margin-bottom: 0; padding: 12px; text-align: center; }
-  .pdf-frame {
-    height: 280px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--white);
-    margin-bottom: 12px;
-  }
-  .pdf-frame iframe { width: 100%; height: 280px; border: 0; pointer-events: none; }
-  .grid-title { font-family: var(--font); font-size: 16px; font-weight: 800; line-height: 1.3; margin-bottom: 4px; }
-  .grid-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
-  .grid-view { display: inline-block; }
-  .page-title { font-family: var(--font); font-size: 28px; font-weight: 800; margin-bottom: 8px; }
-  .lead { font-size: 16px; line-height: 1.6; color: var(--muted); margin-bottom: 28px; }
 
-  .card {
+  .sheets { display: flex; flex-direction: column; gap: 12px; }
+
+  .sheet {
     background: var(--white);
     border: 1px solid var(--border);
     border-radius: 14px;
-    padding: 22px 24px;
-    margin-bottom: 16px;
+    padding: 16px 18px;
   }
-  .sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
-  .sheet-title { font-family: var(--font); font-size: 19px; font-weight: 800; }
-  .sheet-date { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .sheet-row {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sheet-title { font-family: var(--font); font-size: 18px; font-weight: 800; line-height: 1.3; }
+  .sheet-date { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .sheet-actions {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+  .sheet-actions .view-btn,
+  .sheet-actions .entry-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    border-radius: 10px;
+    padding: 12px 10px;
+    text-align: center;
+    cursor: pointer;
+    text-decoration: none;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
   .view-btn {
-    font-family: var(--font); font-weight: 700; font-size: 14px;
-    color: var(--white); background: var(--green);
-    border-radius: 8px; padding: 9px 16px; text-decoration: none; white-space: nowrap;
+    color: var(--white);
+    background: var(--green);
   }
-  .view-btn:hover { background: var(--green-dark); }
+  .view-btn:hover:not(:disabled) { background: var(--green-dark); }
+  .view-btn:disabled { opacity: 0.65; cursor: wait; }
+  .entry-btn {
+    color: var(--green-dark);
+    background: var(--white);
+    border: 1.5px solid var(--green) !important;
+  }
+  .entry-btn:hover,
+  .entry-btn[aria-expanded="true"] {
+    background: var(--green-light);
+  }
 
-  .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 18px; margin-bottom: 16px; }
-  .fact-label { font-size: 12px; color: var(--muted); font-family: var(--font); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+  .entry-panel {
+    display: none;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .sheet.is-open .entry-panel { display: block; }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px 16px;
+    margin-bottom: 14px;
+  }
+  .fact-label {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--font);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
   .fact-value { font-size: 14px; margin-top: 2px; word-break: break-word; }
 
-  .feedback-form { border-top: 1px solid var(--border); padding-top: 14px; display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; align-items: end; }
+  .download-again {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    color: var(--white);
+    background: var(--gold);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    text-decoration: none;
+    cursor: pointer;
+    margin-bottom: 14px;
+  }
+  .download-again:hover { background: #e09415; }
+
+  .feedback-form {
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    display: grid;
+    grid-template-columns: 140px 1fr auto;
+    gap: 12px;
+    align-items: end;
+  }
   label { display: block; font-family: var(--font); font-size: 13px; font-weight: 700; margin-bottom: 6px; }
   select, textarea {
     width: 100%;
@@ -177,15 +232,99 @@
 
   .empty { text-align: center; color: var(--muted); padding: 40px 24px; }
   .empty a { color: var(--green-dark); font-weight: 700; }
+  .card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-bottom: 16px;
+  }
+
+  .pdf-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 100vw;
+    box-sizing: border-box;
+  }
+  .pdf-fullscreen[hidden] { display: none !important; }
+  .pdf-fullscreen-bar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 10px 10px;
+    background: #1a1a1a;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .pdf-fullscreen-bar .btn-done,
+  .pdf-fullscreen-bar .btn-open {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 14px;
+    border-radius: 10px;
+    padding: 12px 10px;
+    text-align: center;
+    cursor: pointer;
+    text-decoration: none;
+    border: none;
+    box-sizing: border-box;
+  }
+  .pdf-fullscreen-bar .btn-done {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+  }
+  .pdf-fullscreen-bar .btn-open {
+    background: var(--gold);
+    color: #fff;
+  }
+  .pdf-fullscreen-pages {
+    flex: 1;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    background: #222;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+  }
+  .pdf-fullscreen-pages canvas {
+    width: 100% !important;
+    max-width: 100%;
+    height: auto !important;
+    display: block;
+    background: #fff;
+    border-radius: 4px;
+  }
+  .pdf-status {
+    font-size: 14px;
+    color: #ccc;
+    text-align: center;
+    padding: 28px 12px;
+  }
 
   @media (max-width: 800px) {
+    :root { --header-h: 72px; }
+    .page { padding: 20px 14px calc(48px + env(safe-area-inset-bottom, 0px)); }
+    .page-title { font-size: 24px; }
     .filter-bar { grid-template-columns: 1fr; }
     .feedback-form { grid-template-columns: 1fr; }
-    .sheet-head { flex-direction: column; align-items: stretch; }
-    .library-head { flex-direction: column; align-items: stretch; gap: 12px; }
-    .page { padding: 20px 16px 48px; }
-    .page-title { font-size: 24px; }
-    .sheet-actions { flex-wrap: wrap; }
+    .sheet { padding: 14px; }
+    .sheet-actions { gap: 8px; }
+    .facts { grid-template-columns: 1fr 1fr; }
   }
 </style>
 </head>
@@ -193,42 +332,30 @@
 {% include "_nav.html" %}
 
 <main class="page">
-      <div class="library-head">
-        <div>
-          <h1 class="page-title" id="library-title">All worksheets</h1>
-          <p class="lead" id="library-lead">Every worksheet you have downloaded, newest first.</p>
-        </div>
-        <div class="layout-toggle" role="group" aria-label="Worksheet layout">
-          <button class="layout-btn" type="button" data-layout="column" aria-label="Column" title="Column">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 3h14M1 8h14M1 13h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          </button>
-          <button class="layout-btn selected" type="button" data-layout="grid" aria-label="Grid" title="Grid">
-            <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-          </button>
-        </div>
-      </div>
+  <h1 class="page-title" id="library-title">All worksheets</h1>
+  <p class="lead" id="library-lead">Every worksheet you have downloaded, newest first.</p>
 
-      <form class="filter-bar" id="filter-bar" role="search">
-        <div>
-          <label for="filter-class">Class</label>
-          <select id="filter-class">
-            <option value="">All classes</option>
-            {% for classroom in classes %}
-            <option value="{{ classroom.class_id }}">{{ classroom.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="filter-student">Student</label>
-          <select id="filter-student" disabled>
-            <option value="">Pick a class first</option>
-          </select>
-        </div>
-        <div>
-          <label for="filter-text">Title</label>
-          <input id="filter-text" type="search" placeholder="Find a worksheet title" />
-        </div>
-      </form>
+  <form class="filter-bar" id="filter-bar" role="search">
+    <div>
+      <label for="filter-class">Class</label>
+      <select id="filter-class">
+        <option value="">All classes</option>
+        {% for classroom in classes %}
+        <option value="{{ classroom.class_id }}">{{ classroom.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="filter-student">Student</label>
+      <select id="filter-student" disabled>
+        <option value="">Pick a class first</option>
+      </select>
+    </div>
+    <div>
+      <label for="filter-text">Title</label>
+      <input id="filter-text" type="search" placeholder="Find a worksheet title" />
+    </div>
+  </form>
 
   {% if not worksheets %}
   <div class="card empty">
@@ -239,63 +366,83 @@
 
   <p class="card empty" id="filter-empty" hidden>No worksheets match that search.</p>
 
-  <div class="sheets layout-grid" id="sheets">
+  <div class="sheets" id="sheets">
   {% for sheet in worksheets %}
-  <article class="card sheet" data-sheet-id="{{ sheet.sheetid }}" data-student-id="{{ sheet.student_id }}" data-class-id="{{ sheet.class_id }}" data-title="{{ sheet.worksheet_title or sheet.title }}">
-    <div class="grid-only">
-      <div class="pdf-frame">
-        <iframe data-src="/worksheets/{{ sheet.sheetid }}/view?version={{ sheet.versionid }}#toolbar=0&navpanes=0&scrollbar=0" title="{{ sheet.title }}"></iframe>
-      </div>
-      <div class="grid-title">{{ sheet.worksheet_title or sheet.title }}</div>
-      <div class="grid-meta">{{ sheet.class_name or "No class" }} · {{ sheet.student }} · Downloaded {{ sheet.download_count }} time{% if sheet.download_count != 1 %}s{% endif %}</div>
-      <a class="view-btn grid-view" href="/worksheets/{{ sheet.sheetid }}/view?version={{ sheet.versionid }}" target="_blank" rel="noopener">View PDF</a>
-    </div>
-
-    <div class="column-only">
-    <div class="sheet-head">
+  <article
+    class="sheet"
+    data-sheet-id="{{ sheet.sheetid }}"
+    data-student-id="{{ sheet.student_id }}"
+    data-class-id="{{ sheet.class_id }}"
+    data-title="{{ sheet.worksheet_title or sheet.title }}"
+    data-pdf-url="/worksheets/{{ sheet.sheetid }}/view?version={{ sheet.versionid }}"
+  >
+    <div class="sheet-row">
       <div>
         <div class="sheet-title">{{ sheet.worksheet_title or sheet.title }}</div>
-        <div class="sheet-date">Last downloaded <span data-utc="{{ sheet.last_downloaded }}">{{ sheet.last_downloaded }}</span></div>
+        <div class="sheet-date">
+          {{ sheet.class_name or "No class" }} · {{ sheet.student }} ·
+          Last downloaded <span data-utc="{{ sheet.last_downloaded }}">{{ sheet.last_downloaded }}</span>
+        </div>
       </div>
-      <a class="view-btn" href="/worksheets/download/{{ sheet.generation_id }}" data-download="{{ sheet.generation_id }}">Download again</a>
+      <div class="sheet-actions">
+        <button type="button" class="view-btn" data-view-pdf>View PDF</button>
+        <button type="button" class="entry-btn" data-view-entry aria-expanded="false">View Entry</button>
+      </div>
     </div>
 
-    <div class="facts">
-      <div><div class="fact-label">Class</div><div class="fact-value">{{ sheet.class_name or "—" }}</div></div>
-      <div><div class="fact-label">Student</div><div class="fact-value">{{ sheet.student }}</div></div>
-      <div><div class="fact-label">Level</div><div class="fact-value">{{ sheet.expected_level }} → {{ sheet.true_level }}</div></div>
-      <div><div class="fact-label">Type</div><div class="fact-value">{{ sheet.sheettype }}</div></div>
-      <div><div class="fact-label">Downloaded</div><div class="fact-value">{{ sheet.download_count }} time{% if sheet.download_count != 1 %}s{% endif %}</div></div>
-      <div><div class="fact-label">DOK</div><div class="fact-value">{{ sheet.dok }}</div></div>
-      <div><div class="fact-label">Interest</div><div class="fact-value">{{ sheet.interest or "—" }}</div></div>
-      <div><div class="fact-label">Vocab</div><div class="fact-value">{{ sheet.vocab or "—" }}</div></div>
-      <div><div class="fact-label">Phonics</div><div class="fact-value">{{ sheet.phonics or "—" }}</div></div>
-    </div>
+    <div class="entry-panel" hidden>
+      <button type="button" class="download-again" data-download="{{ sheet.generation_id }}">Download again</button>
 
-    <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}" data-generation-id="{{ sheet.generation_id }}">
-      <div>
-        <label for="rating-{{ sheet.versionid }}">Rating</label>
-        <select id="rating-{{ sheet.versionid }}" name="rating">
-          <option value="">No rating</option>
-          {% for value in range(rating_min, rating_max + 1) %}
-          <option value="{{ value }}" {% if sheet.rating == value %}selected{% endif %}>{{ value }}</option>
-          {% endfor %}
-        </select>
+      <div class="facts">
+        <div><div class="fact-label">Class</div><div class="fact-value">{{ sheet.class_name or "—" }}</div></div>
+        <div><div class="fact-label">Student</div><div class="fact-value">{{ sheet.student }}</div></div>
+        <div><div class="fact-label">Level</div><div class="fact-value">{{ sheet.expected_level }} → {{ sheet.true_level }}</div></div>
+        <div><div class="fact-label">Type</div><div class="fact-value">{{ sheet.sheettype }}</div></div>
+        <div><div class="fact-label">Downloaded</div><div class="fact-value">{{ sheet.download_count }} time{% if sheet.download_count != 1 %}s{% endif %}</div></div>
+        <div><div class="fact-label">DOK</div><div class="fact-value">{{ sheet.dok }}</div></div>
+        <div><div class="fact-label">Interest</div><div class="fact-value">{{ sheet.interest or "—" }}</div></div>
+        <div><div class="fact-label">Vocab</div><div class="fact-value">{{ sheet.vocab or "—" }}</div></div>
+        <div><div class="fact-label">Phonics</div><div class="fact-value">{{ sheet.phonics or "—" }}</div></div>
       </div>
-      <div>
-        <label for="feedback-{{ sheet.versionid }}">Feedback</label>
-        <textarea id="feedback-{{ sheet.versionid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?">{{ sheet.feedback }}</textarea>
-      </div>
-      <button class="save-btn" type="submit">Save</button>
-      <p class="form-status" role="status"></p>
-    </form>
+
+      <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}" data-generation-id="{{ sheet.generation_id }}">
+        <div>
+          <label for="rating-{{ sheet.versionid }}">Rating</label>
+          <select id="rating-{{ sheet.versionid }}" name="rating">
+            <option value="">No rating</option>
+            {% for value in range(rating_min, rating_max + 1) %}
+            <option value="{{ value }}" {% if sheet.rating == value %}selected{% endif %}>{{ value }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="feedback-{{ sheet.versionid }}">Feedback</label>
+          <textarea id="feedback-{{ sheet.versionid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?">{{ sheet.feedback }}</textarea>
+        </div>
+        <button class="save-btn" type="submit">Save</button>
+        <p class="form-status" role="status"></p>
+      </form>
     </div>
   </article>
   {% endfor %}
   </div>
 </main>
 
+<div class="pdf-fullscreen" id="pdf-fullscreen" hidden>
+  <div class="pdf-fullscreen-bar">
+    <button type="button" class="btn-done" id="pdf-done">Done</button>
+    <a class="btn-open" id="pdf-open" target="_blank" rel="noopener">Open</a>
+  </div>
+  <div class="pdf-fullscreen-pages" id="pdf-fullscreen-pages"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+
   document.querySelectorAll("[data-utc]").forEach((el) => {
     const when = new Date(el.dataset.utc);
     if (!Number.isNaN(when.getTime())) {
@@ -311,6 +458,9 @@
   const filterStudent = document.getElementById("filter-student");
   const filterText = document.getElementById("filter-text");
   const filterStudents = {{ students|tojson }};
+
+  let fullscreenToken = 0;
+  let currentOpenUrl = null;
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -364,7 +514,6 @@
       ? "Showing worksheets that match this search."
       : "Every worksheet you have downloaded, newest first.";
     if (filterEmpty) filterEmpty.hidden = !narrowed || visible > 0 || !document.querySelector(".sheet");
-    if (sheets && sheets.classList.contains("layout-grid")) loadPreviews();
   }
 
   filterClass.addEventListener("change", () => {
@@ -376,29 +525,108 @@
   document.getElementById("filter-bar").addEventListener("submit", (event) => event.preventDefault());
   fillStudents();
 
-  function loadPreviews() {
-    document.querySelectorAll(".sheet:not([hidden]) iframe[data-src]").forEach((frame) => {
-      if (!frame.getAttribute("src")) frame.src = frame.dataset.src;
-    });
+  function viewportWidth() {
+    const vv = window.visualViewport;
+    return Math.floor((vv && vv.width) || window.innerWidth || document.documentElement.clientWidth || 320);
   }
 
-  function applyLayout(layout) {
-    const next = layout === "grid" ? "grid" : "column";
-    if (sheets) {
-      sheets.classList.toggle("layout-grid", next === "grid");
-      sheets.classList.toggle("layout-column", next === "column");
+  async function renderPdfPages(container, pdfBytes, token) {
+    if (!window.pdfjsLib || !pdfBytes || !container) return;
+    const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+    if (token !== fullscreenToken) return;
+    const width = Math.max(240, Math.min(viewportWidth() - 20, 900));
+    const frag = document.createDocumentFragment();
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      if (token !== fullscreenToken) return;
+      const page = await pdf.getPage(pageNum);
+      const base = page.getViewport({ scale: 1 });
+      const scale = width / base.width;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const viewport = page.getViewport({ scale: scale * dpr });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      frag.appendChild(canvas);
     }
-    document.querySelectorAll(".layout-btn").forEach((button) => {
-      button.classList.toggle("selected", button.dataset.layout === next);
-    });
-    localStorage.setItem("worksheet-history-layout", next);
-    if (next === "grid") loadPreviews();
+    if (token !== fullscreenToken) return;
+    container.innerHTML = "";
+    container.appendChild(frag);
   }
 
-  document.querySelectorAll(".layout-btn").forEach((button) => {
-    button.addEventListener("click", () => applyLayout(button.dataset.layout));
+  function closePdfFullscreen() {
+    fullscreenToken += 1;
+    const overlay = document.getElementById("pdf-fullscreen");
+    overlay.hidden = true;
+    document.getElementById("pdf-fullscreen-pages").innerHTML = "";
+    document.body.style.overflow = "";
+    currentOpenUrl = null;
+  }
+
+  async function openPdfFullscreen(pdfUrl, triggerBtn) {
+    const overlay = document.getElementById("pdf-fullscreen");
+    const pages = document.getElementById("pdf-fullscreen-pages");
+    const openBtn = document.getElementById("pdf-open");
+    if (!overlay || !pages || !pdfUrl) return;
+
+    const token = ++fullscreenToken;
+    currentOpenUrl = pdfUrl;
+    openBtn.href = pdfUrl;
+    pages.innerHTML = '<p class="pdf-status">Loading…</p>';
+    overlay.hidden = false;
+    document.body.style.overflow = "hidden";
+    if (triggerBtn) {
+      triggerBtn.disabled = true;
+      triggerBtn.textContent = "Opening…";
+    }
+
+    try {
+      const response = await fetch(pdfUrl);
+      if (!response.ok) throw new Error("Could not load the PDF.");
+      const buffer = await response.arrayBuffer();
+      if (token !== fullscreenToken) return;
+      await renderPdfPages(pages, new Uint8Array(buffer), token);
+    } catch (err) {
+      if (token !== fullscreenToken) return;
+      pages.innerHTML = '<p class="pdf-status">Couldn’t load the PDF. Tap Open.</p>';
+      console.error(err);
+    } finally {
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = "View PDF";
+      }
+    }
+  }
+
+  document.getElementById("pdf-done").addEventListener("click", closePdfFullscreen);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closePdfFullscreen();
   });
-  if (sheets) applyLayout(localStorage.getItem("worksheet-history-layout") || "grid");
+
+  document.querySelectorAll(".sheet").forEach((sheet) => {
+    const entryBtn = sheet.querySelector("[data-view-entry]");
+    const panel = sheet.querySelector(".entry-panel");
+    const pdfBtn = sheet.querySelector("[data-view-pdf]");
+
+    entryBtn.addEventListener("click", () => {
+      const open = !sheet.classList.contains("is-open");
+      document.querySelectorAll(".sheet.is-open").forEach((other) => {
+        if (other === sheet) return;
+        other.classList.remove("is-open");
+        const otherPanel = other.querySelector(".entry-panel");
+        const otherBtn = other.querySelector("[data-view-entry]");
+        if (otherPanel) otherPanel.hidden = true;
+        if (otherBtn) otherBtn.setAttribute("aria-expanded", "false");
+      });
+      sheet.classList.toggle("is-open", open);
+      panel.hidden = !open;
+      entryBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+
+    pdfBtn.addEventListener("click", () => {
+      openPdfFullscreen(sheet.dataset.pdfUrl, pdfBtn);
+    });
+  });
 
   document.querySelectorAll("[data-download]").forEach((link) => {
     link.addEventListener("click", async (event) => {
