@@ -422,6 +422,7 @@ def _start_login_session(teacher):
     session.permanent = True
     session["teacher_id"] = teacher["teacher_id"]
     session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
+    session["teacher_email"] = teacher.get("email")
     session_id = str(uuid.uuid4())
     session["login_session_id"] = session_id
     session["last_touch"] = time.time()
@@ -449,6 +450,7 @@ def _touch_login_session():
 def _teacher_session(teacher):
     session["teacher_id"] = teacher["teacher_id"]
     session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
+    session["teacher_email"] = teacher.get("email")
 
 
 def _verified_teacher():
@@ -1086,7 +1088,8 @@ def logout():
     db.end_login_session(session.get("login_session_id"))
     session.clear()
     events.log_event(events.LOGOUT, teacher_id=teacher_id, success=True, status_code=200)
-    return redirect("/")
+    # Query flag tells the PostHog snippet to call reset() on the next page.
+    return redirect("/login?ph_reset=1")
 
 
 @app.route("/account")
@@ -2635,6 +2638,27 @@ def api_worksheet_feedback(sheet_id):
     })
 
 
+def _posthog_template_vars():
+    """Browser PostHog snippet config. Empty key disables the snippet."""
+    key = (os.getenv("POSTHOG_KEY") or "").strip()
+    host = (os.getenv("POSTHOG_HOST") or "https://us.i.posthog.com").strip()
+    vars_ = {
+        "posthog_key": key or None,
+        "posthog_host": host,
+        "posthog_distinct_id": None,
+        "posthog_email": None,
+        "posthog_name": None,
+        "posthog_reset": request.args.get("ph_reset") == "1",
+    }
+    teacher_id = session.get("teacher_id")
+    if teacher_id:
+        vars_["posthog_distinct_id"] = str(teacher_id)
+        vars_["posthog_email"] = session.get("teacher_email")
+        vars_["posthog_name"] = session.get("teacher_name")
+        vars_["posthog_reset"] = False
+    return vars_
+
+
 @app.context_processor
 def inject_nav():
     teacher_id = session.get("teacher_id")
@@ -2644,6 +2668,7 @@ def inject_nav():
         "has_pro_access": False,
         "is_paid_pro": False,
         "pilot_badge": None,
+        **_posthog_template_vars(),
     }
     if not teacher_id:
         return empty
@@ -2674,6 +2699,7 @@ def inject_nav():
         "has_pro_access": has_pro,
         "is_paid_pro": paid,
         "pilot_badge": badge,
+        **_posthog_template_vars(),
     }
 
 
