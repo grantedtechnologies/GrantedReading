@@ -128,7 +128,7 @@ def test_expired_pilot_code_does_not_create_an_account(monkeypatch):
     assert created == []
 
 
-def test_live_pilot_skips_payment_and_sends_confirmation(monkeypatch):
+def test_live_pilot_still_sends_to_stripe_checkout(monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     created = []
@@ -157,14 +157,18 @@ def test_live_pilot_skips_payment_and_sends_confirmation(monkeypatch):
             "verified": 0,
         },
     )
-    monkeypatch.setattr(app_module, "_issue_verification", lambda *args: True)
+    monkeypatch.setattr(app_module.billing, "is_paid_pro", lambda teacher_id: False)
+    monkeypatch.setattr(
+        app_module.billing,
+        "create_checkout_session",
+        lambda *args, **kwargs: "https://checkout.test/pilot",
+    )
     with _client(monkeypatch) as client:
         response = client.post("/signup", json=_signup_body(membership="pilot", pilot_code="RIVERSIDE2026"))
     data = response.get_json()
     assert response.status_code == 200
-    assert data["email_sent"] is True
-    assert data["needs_verification"] is True
-    assert "checkout_url" not in data
+    assert data["checkout_url"] == "https://checkout.test/pilot"
+    assert "needs_verification" not in data
     assert created and created[0][-1]["pilotid"] == 1
 
 

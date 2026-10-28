@@ -534,6 +534,7 @@ ACCOUNT_ENDPOINTS = {
     "account",
     "api_account",
     "api_update_account",
+    "api_submit_survey",
     "api_students",
     "api_classes",
     "api_create_student",
@@ -556,6 +557,17 @@ ACCOUNT_ENDPOINTS = {
     "view_worksheet",
     "worksheet_history",
     "api_worksheet_feedback",
+}
+
+# While a survey is due within a day (or overdue), only account + survey submit stay open.
+SURVEY_GATE_ALLOWED_ENDPOINTS = {
+    "account",
+    "api_account",
+    "api_update_account",
+    "api_submit_survey",
+    "api_redeem_pilot",
+    "billing_create_checkout_session",
+    "billing_create_portal_session",
 }
 
 
@@ -600,6 +612,28 @@ def _enforce_verified_account():
     if teacher is None:
         _log_signed_out_attempt()
         return _session_expired_response()
+    if request.endpoint in SURVEY_GATE_ALLOWED_ENDPOINTS:
+        return None
+    try:
+        blocking = db.blocking_survey_for_teacher(teacher["teacher_id"])
+    except Exception:
+        app.logger.exception(
+            "Could not check survey gate for teacher %s", teacher["teacher_id"]
+        )
+        return None
+    if not blocking:
+        return None
+    if request.path.startswith("/api/") or request.endpoint in (
+        "generate",
+        "download_worksheet",
+        "update_pdf",
+    ):
+        return jsonify({
+            "error": "Finish your survey on the Account page before continuing.",
+            "survey_required": True,
+            "survey_id": blocking["survey_id"],
+        }), 403
+    return redirect("/account?survey=required")
 
 
 def _log_signed_out_attempt():
@@ -649,10 +683,20 @@ def _parse_words(raw):
     return words
 
 
+def _home_path_for_teacher(teacher_id):
+    """Worksheet home, or Account when a survey is due within a day."""
+    try:
+        if teacher_id and db.blocking_survey_for_teacher(teacher_id):
+            return "/account?survey=required"
+    except Exception:
+        app.logger.exception("Could not check survey redirect for teacher %s", teacher_id)
+    return "/worksheet"
+
+
 @app.route("/")
 def index():
     if session.get("teacher_id"):
-        return redirect("/worksheet")
+        return redirect(_home_path_for_teacher(session.get("teacher_id")))
     return render_template(
         "login.html",
         initial_mode="signup",
@@ -677,7 +721,7 @@ def api_students():
 @app.route("/login")
 def login_page():
     if session.get("teacher_id"):
-        return redirect("/worksheet")
+        return redirect(_home_path_for_teacher(session.get("teacher_id")))
     return render_template(
         "login.html",
         initial_mode="signin",
@@ -735,7 +779,7 @@ def login():
 
     _start_login_session(teacher)
     events.log_event(events.LOGIN, teacher_id=teacher["teacher_id"], success=True, status_code=200)
-    return jsonify({"ok": True, "redirect": "/worksheet"})
+    return jsonify({"ok": True, "redirect": _home_path_for_teacher(teacher["teacher_id"])})
 
 
 def _place_fields(body):
@@ -839,7 +883,9 @@ def signup():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 409
 
-    if plan != "pro" or pilot:
+    # Standard confirms by email only. Pro and Pilot both go to Stripe next
+    # (pilot still gets the code applied; payment is the paid Pro subscription).
+    if plan == "standard" or billing.is_paid_pro(teacher["teacher_id"]):
         sent = _issue_verification(teacher, request.host_url)
         if not sent:
             return jsonify({
@@ -849,18 +895,7 @@ def signup():
             }), 503
         return jsonify({"ok": True, "needs_verification": True, "email_sent": True})
 
-    if billing.is_teacher_pro(teacher["teacher_id"]):
-        sent = _issue_verification(teacher, request.host_url)
-        if not sent:
-            return jsonify({
-                "error": EMAIL_SEND_FAILED,
-                "needs_verification": True,
-                "email_sent": False,
-            }), 503
-        return jsonify({"ok": True, "needs_verification": True, "email_sent": True})
-
-    # Pro confirms the email after payment, so the pages run signup, checkout,
-    # then the check-your-email screen.
+    # Pro/Pilot: Checkout first, then the check-your-email screen after payment.
     session["pending_checkout_teacher_id"] = teacher["teacher_id"]
     base = request.host_url.rstrip("/")
     try:
@@ -971,6 +1006,8 @@ def verify():
     db.mark_teacher_verified(teacher["teacher_id"])
     teacher["verified"] = 1
     _start_login_session(teacher)
+    if db.blocking_survey_for_teacher(teacher["teacher_id"]):
+        return redirect("/account?survey=required")
     if db.list_classes_for_teacher(teacher["teacher_id"]):
         return redirect("/worksheet")
     return redirect("/setup")
@@ -1131,7 +1168,10 @@ def api_account():
         billing_state = {
             "is_pro": billing.has_pro_access(teacher_id),
             "is_paid_pro": billing.is_paid_pro(teacher_id),
-            "can_manage": billing.is_paid_pro(teacher_id) and subscription is not None,
+            # Portal whenever Stripe has a customer on file (upgrade/downgrade).
+            "can_manage": bool(
+                subscription and subscription.get("stripe_customer_id")
+            ),
             "plan_name": billing.PLAN_NAME,
             "price_cents": billing.PLAN_PRICE_CENTS,
             "interval": billing.PLAN_INTERVAL,
@@ -1147,11 +1187,53 @@ def api_account():
     except Exception:
         app.logger.exception("Could not read billing status for teacher %s", teacher_id)
         billing_state = None
+    surveys = []
+    survey_required = False
+    try:
+        surveys = db.list_surveys_for_teacher(teacher_id)
+        survey_required = db.blocking_survey_for_teacher(teacher_id) is not None
+    except Exception:
+        app.logger.exception("Could not load surveys for teacher %s", teacher_id)
     return jsonify({
         "teacher": teacher,
         "classes": db.list_classes_for_teacher(teacher_id),
         "students": db.list_students_for_teacher(teacher_id),
         "billing": billing_state,
+        "surveys": surveys,
+        "survey_required": survey_required,
+    })
+
+
+@app.route("/api/account/surveys/<int:survey_id>", methods=["POST"])
+def api_submit_survey(survey_id):
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    raw_answers = body.get("answers") or {}
+    if not isinstance(raw_answers, dict):
+        return jsonify({"error": "Send answers as a map of question id to text."}), 400
+    answers = {}
+    for key, value in raw_answers.items():
+        try:
+            answers[int(key)] = value
+        except (TypeError, ValueError):
+            return jsonify({"error": "Each answer needs a question id."}), 400
+    try:
+        db.save_survey_answers(teacher_id, survey_id, answers)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        app.logger.exception(
+            "Could not save survey %s for teacher %s", survey_id, teacher_id
+        )
+        return jsonify({"error": "Could not save that survey."}), 500
+    surveys = db.list_surveys_for_teacher(teacher_id)
+    return jsonify({
+        "ok": True,
+        "surveys": surveys,
+        "survey_required": db.blocking_survey_for_teacher(teacher_id) is not None,
+        "pending_count": db.pending_survey_count(teacher_id),
     })
 
 
@@ -1193,10 +1275,27 @@ def api_redeem_pilot():
     if pilot is None:
         return jsonify({"error": "Enter a pilot code."}), 400
     db.join_pilot(teacher_id, pilot)
-    return jsonify({
+    payload = {
         "ok": True,
         "pilot": {"name": pilot["name"], "ends": pilot["endTime"].date().isoformat()},
-    })
+    }
+    # Same as signup: after a code, still send them to Stripe for Pro.
+    if billing.is_paid_pro(teacher_id):
+        return jsonify(payload)
+    try:
+        payload["checkout_url"] = billing.create_checkout_session(
+            teacher, request.host_url
+        )
+    except billing.BillingNotConfigured:
+        app.logger.exception("Billing is not configured")
+        return jsonify({"error": "Billing is not set up yet."}), 503
+    except stripe.StripeError:
+        app.logger.exception(
+            "Stripe Checkout session failed after pilot redeem for teacher %s",
+            teacher_id,
+        )
+        return jsonify({"error": "Could not reach Stripe. Try again."}), 502
+    return jsonify(payload)
 
 
 @app.route("/billing/create-checkout-session", methods=["POST"])
@@ -1207,7 +1306,7 @@ def billing_create_checkout_session():
     try:
         if billing.is_paid_pro(teacher["teacher_id"]):
             return jsonify({
-                "error": f"You already have {billing.PLAN_NAME}. Use Manage subscription to change it.",
+                "error": f"You already have {billing.PLAN_NAME}. Choose Standard to manage or cancel it.",
             }), 409
         url = billing.create_checkout_session(teacher, request.host_url)
     except billing.BillingNotConfigured:
@@ -1221,17 +1320,17 @@ def billing_create_checkout_session():
 
 @app.route("/billing/create-portal-session", methods=["POST"])
 def billing_create_portal_session():
+    """Open Stripe Billing Portal so a paid subscriber can cancel / downgrade."""
     teacher_id, error = _require_teacher_id()
     if error:
         return error
-    if not billing.is_paid_pro(teacher_id):
-        return jsonify({"error": "You do not have a Stripe subscription to manage yet."}), 404
     subscription = db.latest_subscription(teacher_id)
-    if subscription is None or not subscription.get("stripe_customer_id"):
+    customer_id = (subscription or {}).get("stripe_customer_id")
+    if not customer_id:
         return jsonify({"error": "You do not have a Stripe subscription to manage yet."}), 404
     try:
         url = billing.create_portal_session(
-            subscription["stripe_customer_id"],
+            customer_id,
             request.host_url.rstrip("/") + "/account",
         )
     except billing.BillingNotConfigured:
@@ -2668,6 +2767,7 @@ def inject_nav():
         "has_pro_access": False,
         "is_paid_pro": False,
         "pilot_badge": None,
+        "survey_pending_count": 0,
         **_posthog_template_vars(),
     }
     if not teacher_id:
@@ -2677,6 +2777,7 @@ def inject_nav():
     has_pro = False
     paid = False
     badge = None
+    survey_pending = 0
     try:
         recent = [_history_item(sheet) for sheet in db.list_downloaded_versions(teacher_id, limit=5)]
     except Exception:
@@ -2693,12 +2794,17 @@ def inject_nav():
             badge = f"Pilot — {pilot['name']}, ends {pilot['endTime'].date().isoformat()}"
     except Exception:
         app.logger.exception("Could not load access for teacher %s", teacher_id)
+    try:
+        survey_pending = db.pending_survey_count(teacher_id)
+    except Exception:
+        app.logger.exception("Could not load survey badge for teacher %s", teacher_id)
     return {
         "nav_recent": recent,
         "nav_classes": classes,
         "has_pro_access": has_pro,
         "is_paid_pro": paid,
         "pilot_badge": badge,
+        "survey_pending_count": survey_pending,
         **_posthog_template_vars(),
     }
 

@@ -266,7 +266,7 @@
             <input type="radio" name="membership" value="pilot" />
             <div class="plan-name">Pilot</div>
             <div class="plan-price">School code</div>
-            <div class="plan-note">Unlimited while it is live</div>
+            <div class="plan-note">Code, then Pro payment</div>
           </label>
         </div>
         <p class="note" id="plan-note">Pro goes to payment first. The confirmation email comes after that.</p>
@@ -274,7 +274,7 @@
       <div class="field hidden" id="pilot-field">
         <label for="pilot-code">Pilot code</label>
         <input id="pilot-code" name="pilot_code" type="text" autocomplete="off" />
-        <p class="note">Enter the code from your school. A live pilot skips payment and confirms by email.</p>
+        <p class="note">Enter the code from your school. You’ll still continue to payment for Pro; the confirmation email comes after that.</p>
       </div>
       <div class="error" id="error"></div>
       <button class="submit{% if not resume_checkout %} hidden{% endif %}" id="resume-checkout" type="button">Continue to payment</button>
@@ -386,7 +386,7 @@
     document.getElementById("pilot-field").classList.toggle("hidden", !signingUp || plan !== "pilot");
     const note = document.getElementById("plan-note");
     if (plan === "pilot") {
-      note.textContent = "A live pilot code skips payment. You confirm your email, then get unlimited worksheets until the pilot ends.";
+      note.textContent = "Enter your school’s pilot code, then continue to payment for Pro. The confirmation email comes after that.";
     } else if (plan === "pro") {
       note.textContent = "Pro goes to payment first. The confirmation email comes after that.";
     } else {

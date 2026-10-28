@@ -76,6 +76,103 @@
     font-family: var(--font); font-weight: 800; font-size: 14px; color: var(--green);
   }
 
+  .survey-banner {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .survey-banner[hidden] { display: none; }
+
+  .survey-list { display: flex; flex-direction: column; gap: 16px; }
+  .survey-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    background: #fafafa;
+  }
+  .survey-item.due-soon { border-color: #fca5a5; background: #fff7f7; }
+  .survey-item.done { background: var(--white); }
+  .survey-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px 16px;
+    margin-bottom: 8px;
+  }
+  .survey-title {
+    font-family: var(--font);
+    font-size: 17px;
+    font-weight: 800;
+  }
+  .survey-meta {
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .survey-meta.urgent { color: #b91c1c; }
+  .survey-desc {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 14px;
+  }
+  .survey-q {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .survey-q label {
+    display: block;
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .survey-q textarea,
+  .survey-q input[type="text"] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+    background: var(--white);
+  }
+  .survey-q textarea { min-height: 88px; resize: vertical; }
+  .scale-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+  }
+  .scale-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    margin: 0;
+    cursor: pointer;
+  }
+  .survey-answer-readonly {
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .survey-empty {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
   .page {
     margin: var(--header-h) auto 0;
     padding: 40px 32px 64px;
@@ -224,6 +321,19 @@
   <h1 class="page-title">Account</h1>
   <p class="lead">Update your name, school, location, and plan.</p>
 
+  <div class="survey-banner" id="survey-banner" hidden>
+    A survey is due within a day. Finish it below before you can use the rest of the app.
+  </div>
+
+  <section class="card" id="surveys">
+    <h2>Surveys</h2>
+    <p class="hint">Pilot and baseline surveys show here. Answer every question, then submit.</p>
+    <div class="survey-list" id="survey-list">
+      <p class="survey-empty">Loading surveys…</p>
+    </div>
+    <div class="status" id="survey-status"></div>
+  </section>
+
   <section class="card">
     <h2>Your profile</h2>
     <p class="hint">Email and password stay the same here.</p>
@@ -273,7 +383,7 @@
 
   <section class="card" id="billing-card" hidden>
     <h2>Plan</h2>
-    <p class="hint" id="billing-hint">Pro is billed on Stripe.</p>
+    <p class="hint" id="billing-hint">Switch plans anytime. Pro is billed on Stripe.</p>
     <div class="plan-grid">
       <button type="button" class="plan-card" id="plan-standard">
         <div class="plan-name">Standard</div>
@@ -290,9 +400,10 @@
     <div class="field" id="pilot-redeem">
       <label for="pilot-code">Pilot code</label>
       <div class="row">
-        <input id="pilot-code" type="text" autocomplete="off" />
-        <button class="submit" type="button" id="pilot-redeem-btn">Redeem</button>
+        <input id="pilot-code" type="text" autocomplete="off" placeholder="School pilot code" />
+        <button class="submit" type="button" id="pilot-redeem-btn">Redeem &amp; pay</button>
       </div>
+      <p class="hint">Redeeming a code adds pilot access, then continues to Stripe for Pro.</p>
     </div>
     <div class="status" id="billing-status"></div>
   </section>
@@ -324,6 +435,137 @@
     }
   }
 
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function dueLabel(survey) {
+    const due = (survey.due_at || "").slice(0, 10);
+    if (survey.completed) return `Completed · due ${due}`;
+    if (survey.due_soon) return `Due soon · ${due}`;
+    return `Due ${due}`;
+  }
+
+  function questionField(survey, question) {
+    const qid = question.question_id;
+    const type = (question.question_type || "text").toLowerCase();
+    const name = `q-${survey.survey_id}-${qid}`;
+    const answered = question.answer || "";
+    if (survey.completed) {
+      return `<div class="survey-answer-readonly">${escapeHtml(answered) || "—"}</div>`;
+    }
+    if (type === "scale" || type === "likert" || type === "rating") {
+      const radios = [1, 2, 3, 4, 5].map((n) => {
+        const checked = String(answered) === String(n) ? " checked" : "";
+        return `<label><input type="radio" name="${name}" value="${n}" data-question="${qid}"${checked} /> ${n}</label>`;
+      }).join("");
+      return `<div class="scale-row">${radios}</div>`;
+    }
+    if (type === "text" || type === "short_text") {
+      return `<input type="text" name="${name}" data-question="${qid}" value="${escapeHtml(answered)}" maxlength="8000" />`;
+    }
+    return `<textarea name="${name}" data-question="${qid}" maxlength="8000">${escapeHtml(answered)}</textarea>`;
+  }
+
+  function renderSurveys(surveys, required) {
+    const banner = document.getElementById("survey-banner");
+    banner.hidden = !required;
+    const list = document.getElementById("survey-list");
+    if (!surveys || !surveys.length) {
+      list.innerHTML = `<p class="survey-empty">No surveys assigned yet.</p>`;
+      return;
+    }
+    list.innerHTML = surveys.map((survey) => {
+      const classes = ["survey-item"];
+      if (survey.completed) classes.push("done");
+      if (survey.due_soon) classes.push("due-soon");
+      const questions = (survey.questions || []).map((question, index) => `
+        <div class="survey-q">
+          <label>${index + 1}. ${escapeHtml(question.content)}</label>
+          ${questionField(survey, question)}
+        </div>
+      `).join("");
+      const actions = survey.completed
+        ? ""
+        : `<button class="submit" type="button" data-submit-survey="${survey.survey_id}">Submit survey</button>`;
+      return `
+        <article class="${classes.join(" ")}" id="survey-${survey.survey_id}">
+          <div class="survey-head">
+            <div class="survey-title">${escapeHtml(survey.title)}</div>
+            <div class="survey-meta${survey.due_soon && !survey.completed ? " urgent" : ""}">${escapeHtml(dueLabel(survey))}</div>
+          </div>
+          <p class="survey-desc">${escapeHtml(survey.description || "")}</p>
+          ${questions || `<p class="survey-empty">No questions on this survey yet.</p>`}
+          ${actions}
+        </article>
+      `;
+    }).join("");
+    list.querySelectorAll("[data-submit-survey]").forEach((button) => {
+      button.addEventListener("click", () => submitSurvey(Number(button.dataset.submitSurvey), button));
+    });
+  }
+
+  async function submitSurvey(surveyId, button) {
+    const article = document.getElementById(`survey-${surveyId}`);
+    if (!article) return;
+    const answers = {};
+    article.querySelectorAll("[data-question]").forEach((el) => {
+      const qid = el.getAttribute("data-question");
+      if (el.type === "radio") {
+        if (el.checked) answers[qid] = el.value;
+        return;
+      }
+      answers[qid] = el.value;
+    });
+    button.disabled = true;
+    const response = await send(`/api/account/surveys/${surveyId}`, { answers });
+    button.disabled = false;
+    setStatus(
+      "survey-status",
+      response.ok ? "Survey submitted. Thank you." : response.error,
+      response.ok,
+    );
+    if (response.ok) {
+      renderSurveys(response.data.surveys || [], !!response.data.survey_required);
+      updateSurveyBubble(response.data.pending_count || 0);
+      if (!response.data.survey_required && window.location.search.includes("survey=required")) {
+        window.history.replaceState({}, "", "/account#surveys");
+      }
+    }
+  }
+
+  function updateSurveyBubble(count) {
+    const btn = document.getElementById("account-menu-toggle");
+    if (!btn) return;
+    let bubble = btn.querySelector(".survey-bubble");
+    const link = document.querySelector('#account-menu a[href="/account#surveys"]');
+    if (count > 0) {
+      if (!bubble) {
+        bubble = document.createElement("span");
+        bubble.className = "survey-bubble";
+        btn.appendChild(bubble);
+      }
+      bubble.textContent = count < 10 ? String(count) : "9+";
+      bubble.setAttribute("aria-label", `${count} survey${count === 1 ? "" : "s"} waiting`);
+      if (link && !link.querySelector(".survey-menu-dot")) {
+        const dot = document.createElement("span");
+        dot.className = "survey-menu-dot";
+        dot.setAttribute("aria-hidden", "true");
+        link.appendChild(dot);
+      }
+    } else {
+      if (bubble) bubble.remove();
+      if (link) {
+        const dot = link.querySelector(".survey-menu-dot");
+        if (dot) dot.remove();
+      }
+    }
+  }
+
   async function loadAccount() {
     const response = await fetch("/api/account");
     if (response.status === 401) {
@@ -346,6 +588,7 @@
       nameEl.textContent = `${teacher.first_name} ${teacher.last_name}`;
     }
     renderBilling(data.billing);
+    renderSurveys(data.surveys || [], !!data.survey_required);
     if (billingResult === "success") {
       const onPro = data.billing && data.billing.is_pro;
       setStatus(
@@ -353,6 +596,10 @@
         onPro ? "You're on Pro." : "Payment received, but the plan has not updated yet. Refresh this page.",
         !!onPro,
       );
+    }
+    if (window.location.search.includes("survey=required") || window.location.hash === "#surveys") {
+      const target = document.getElementById("surveys");
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
 
@@ -365,8 +612,9 @@
     if (!billing) return;
     const price = (billing.price_cents / 100).toFixed(2);
     document.getElementById("plan-pro-price").textContent = `$${price} · unlimited worksheets`;
-    document.getElementById("plan-standard").classList.toggle("selected", !billing.is_pro);
-    document.getElementById("plan-pro").classList.toggle("selected", !!billing.is_pro);
+    // Paid Stripe Pro is the selected Pro card. Pilot-only still lets you click Pro to pay.
+    document.getElementById("plan-standard").classList.toggle("selected", !billing.is_paid_pro);
+    document.getElementById("plan-pro").classList.toggle("selected", !!billing.is_paid_pro);
     const pilotPanel = document.getElementById("pilot-panel");
     const pilotHint = document.getElementById("pilot-hint");
     if (billing.pilot) {
@@ -378,28 +626,47 @@
     }
     if (billing.is_paid_pro) {
       document.getElementById("billing-hint").textContent =
-        `You are on ${billing.plan_name}. Choose Standard to cancel on Stripe.`;
+        `You are on paid ${billing.plan_name}. Choose Standard anytime to manage or cancel on Stripe.`;
     } else if (billing.pilot) {
       document.getElementById("billing-hint").textContent =
-        `You have pilot access. Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}.`;
+        `You have pilot access. Choose ${billing.plan_name} anytime to subscribe for $${price} a ${billing.interval}.`;
     } else {
       document.getElementById("billing-hint").textContent =
-        `Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}.`;
+        `Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}, or Standard stays free.`;
     }
   }
 
   document.getElementById("pilot-redeem-btn").addEventListener("click", async () => {
+    const btn = document.getElementById("pilot-redeem-btn");
+    btn.disabled = true;
     const response = await send("/api/account/pilot-code", {
       pilot_code: document.getElementById("pilot-code").value,
     });
-    setStatus("billing-status", response.ok ? "Pilot access added." : response.error, response.ok);
+    if (response.ok && response.data && response.data.checkout_url) {
+      window.location.href = response.data.checkout_url;
+      return;
+    }
+    btn.disabled = false;
+    setStatus(
+      "billing-status",
+      response.ok ? "Pilot access added." : response.error,
+      response.ok,
+    );
     if (response.ok) await loadAccount();
   });
 
   async function choosePlan(wantPro, button) {
-    if (!currentBilling || wantPro === !!currentBilling.is_pro) return;
+    if (!currentBilling) return;
+    if (wantPro) {
+      if (currentBilling.is_paid_pro) return;
+    } else {
+      if (!currentBilling.is_paid_pro) return;
+      if (!currentBilling.can_manage) {
+        setStatus("billing-status", "No Stripe subscription to manage yet.", false);
+        return;
+      }
+    }
     const url = wantPro ? "/billing/create-checkout-session" : "/billing/create-portal-session";
-    if (!wantPro && !currentBilling.can_manage) return;
     button.disabled = true;
     const response = await send(url, {});
     if (response.ok && response.data.url) {

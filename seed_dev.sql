@@ -126,3 +126,59 @@ INSERT INTO `Events` (eventType, teacherid, pilotid, eventTime, entity, entityid
   ('vocab_list_deleted', 1, NULL, '2026-10-01 10:00:00', 'vocabList', 7, 200, NULL, 1),
   ('vocab_list_deleted', 1, NULL, '2026-10-04 11:00:00', 'vocabList', 4, 404, 'not_found', 0),
   ('worksheet_generated', 1, NULL, '2026-10-06 14:10:00', NULL, NULL, 429, 'quota_exceeded', 0);
+
+-- Surveys: Riverside mid-pilot (due soon for Priya). Global baseline already answered by Luis.
+INSERT INTO `Survey` (surveyDate, title, description, baseline, pilotid)
+SELECT '2026-10-28 23:59:59', 'Riverside mid-pilot check-in',
+       'Tell us how Granted Reading is going in your classroom this week.',
+       0, p.pilotid
+FROM Pilot p
+WHERE p.code = 'RIVERSIDE2026'
+LIMIT 1;
+
+INSERT INTO `Survey` (surveyDate, title, description, baseline, pilotid) VALUES
+  ('2026-09-15 23:59:59', 'Teacher baseline survey',
+   'A short start-of-year check so we know how you teach reading now.',
+   1, NULL);
+
+INSERT INTO `Question` (content, surveyid, questionType)
+SELECT 'How often are you generating worksheets with Granted Reading?', s.surveyid, 'scale'
+FROM Survey s
+WHERE s.title = 'Riverside mid-pilot check-in'
+LIMIT 1;
+INSERT INTO `Question` (content, surveyid, questionType)
+SELECT 'What is working well for your students?', s.surveyid, 'textarea'
+FROM Survey s
+WHERE s.title = 'Riverside mid-pilot check-in'
+LIMIT 1;
+INSERT INTO `Question` (content, surveyid, questionType)
+SELECT 'What would you change next?', s.surveyid, 'textarea'
+FROM Survey s
+WHERE s.title = 'Riverside mid-pilot check-in'
+LIMIT 1;
+
+INSERT INTO `Question` (content, surveyid, questionType)
+SELECT 'How confident do you feel matching text to a student reading level?', s.surveyid, 'scale'
+FROM Survey s
+WHERE s.title = 'Teacher baseline survey'
+LIMIT 1;
+INSERT INTO `Question` (content, surveyid, questionType)
+SELECT 'What grade bands do you teach most?', s.surveyid, 'text'
+FROM Survey s
+WHERE s.title = 'Teacher baseline survey'
+LIMIT 1;
+
+INSERT INTO `Answer` (content, teacherid, questionid, answertime)
+SELECT '4', 2, q.questionid, '2026-09-10 12:00:00'
+FROM Question q
+JOIN Survey s ON s.surveyid = q.surveyid
+WHERE s.title = 'Teacher baseline survey'
+  AND q.questionType = 'scale'
+LIMIT 1;
+INSERT INTO `Answer` (content, teacherid, questionid, answertime)
+SELECT 'Grades 5–6', 2, q.questionid, '2026-09-10 12:00:00'
+FROM Question q
+JOIN Survey s ON s.surveyid = q.surveyid
+WHERE s.title = 'Teacher baseline survey'
+  AND q.questionType = 'text'
+LIMIT 1;

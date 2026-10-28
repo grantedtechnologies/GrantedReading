@@ -1416,3 +1416,284 @@ def end_login_session(session_id):
     if not session_id:
         return
     touch_login_session(session_id)
+
+
+def _survey_assigned_clause():
+    """Survey is for this teacher when global or linked to one of their pilots."""
+    return """
+        (
+          s.pilotid IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM subscriptions sub
+            WHERE sub.teacherid = :teacher_id
+              AND sub.pilotid = s.pilotid
+          )
+        )
+    """
+
+
+def _survey_answered_counts(conn, teacher_id, survey_ids):
+    if not survey_ids:
+        return {}
+    placeholders = ", ".join(f":sid{i}" for i in range(len(survey_ids)))
+    params = {"teacher_id": int(teacher_id)}
+    for i, sid in enumerate(survey_ids):
+        params[f"sid{i}"] = int(sid)
+    rows = conn.execute(
+        text(
+            f"""
+            SELECT q.surveyid AS survey_id,
+                   COUNT(*) AS question_count,
+                   COUNT(a.answerid) AS answered_count
+            FROM Question q
+            LEFT JOIN Answer a
+              ON a.questionid = q.questionid
+             AND a.teacherid = :teacher_id
+            WHERE q.surveyid IN ({placeholders})
+            GROUP BY q.surveyid
+            """
+        ),
+        params,
+    ).mappings().all()
+    return {
+        int(row["survey_id"]): {
+            "question_count": int(row["question_count"] or 0),
+            "answered_count": int(row["answered_count"] or 0),
+        }
+        for row in rows
+    }
+
+
+def _format_survey_row(row, counts, due_soon=False):
+    survey_id = int(row["survey_id"])
+    stats = counts.get(survey_id, {"question_count": 0, "answered_count": 0})
+    question_count = stats["question_count"]
+    answered_count = stats["answered_count"]
+    completed = question_count > 0 and answered_count >= question_count
+    due = row["due_at"]
+    return {
+        "survey_id": survey_id,
+        "title": row["title"],
+        "description": row["description"],
+        "due_at": due.isoformat(sep=" ") if hasattr(due, "isoformat") else str(due),
+        "baseline": bool(row["baseline"]) if row["baseline"] is not None else False,
+        "pilot_id": int(row["pilot_id"]) if row["pilot_id"] is not None else None,
+        "question_count": question_count,
+        "answered_count": answered_count,
+        "completed": completed,
+        "due_soon": bool(due_soon) and not completed,
+    }
+
+
+def list_surveys_for_teacher(teacher_id):
+    """Assigned surveys with completion status, soonest due first."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT s.surveyid AS survey_id,
+                       s.surveyDate AS due_at,
+                       s.title,
+                       s.description,
+                       s.baseline,
+                       s.pilotid AS pilot_id,
+                       (s.surveyDate <= UTC_TIMESTAMP() + INTERVAL 1 DAY) AS due_soon
+                FROM Survey s
+                WHERE {_survey_assigned_clause()}
+                ORDER BY s.surveyDate ASC, s.surveyid ASC
+                """
+            ),
+            {"teacher_id": int(teacher_id)},
+        ).mappings().all()
+        counts = _survey_answered_counts(
+            conn, teacher_id, [int(row["survey_id"]) for row in rows]
+        )
+        surveys = [
+            _format_survey_row(row, counts, due_soon=bool(row["due_soon"]))
+            for row in rows
+        ]
+        for survey in surveys:
+            survey["questions"] = _questions_with_answers(
+                conn, teacher_id, survey["survey_id"]
+            )
+        return surveys
+
+
+def _questions_with_answers(conn, teacher_id, survey_id):
+    rows = conn.execute(
+        text(
+            """
+            SELECT q.questionid AS question_id,
+                   q.content,
+                   q.questionType AS question_type,
+                   a.content AS answer,
+                   a.answertime AS answered_at
+            FROM Question q
+            LEFT JOIN Answer a
+              ON a.questionid = q.questionid
+             AND a.teacherid = :teacher_id
+            WHERE q.surveyid = :survey_id
+            ORDER BY q.questionid ASC
+            """
+        ),
+        {"teacher_id": int(teacher_id), "survey_id": int(survey_id)},
+    ).mappings().all()
+    out = []
+    for row in rows:
+        answered_at = row["answered_at"]
+        out.append(
+            {
+                "question_id": int(row["question_id"]),
+                "content": row["content"],
+                "question_type": (row["question_type"] or "text").strip().lower(),
+                "answer": row["answer"],
+                "answered_at": (
+                    answered_at.isoformat(sep=" ")
+                    if hasattr(answered_at, "isoformat")
+                    else None
+                ),
+            }
+        )
+    return out
+
+
+def pending_survey_count(teacher_id):
+    """Incomplete surveys assigned to this teacher (for the nav badge)."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS pending
+                FROM Survey s
+                WHERE {_survey_assigned_clause()}
+                  AND (
+                    SELECT COUNT(*) FROM Question q WHERE q.surveyid = s.surveyid
+                  ) > 0
+                  AND (
+                    SELECT COUNT(DISTINCT a.questionid)
+                    FROM Answer a
+                    JOIN Question q ON q.questionid = a.questionid
+                    WHERE q.surveyid = s.surveyid
+                      AND a.teacherid = :teacher_id
+                  ) < (
+                    SELECT COUNT(*) FROM Question q WHERE q.surveyid = s.surveyid
+                  )
+                """
+            ),
+            {"teacher_id": int(teacher_id)},
+        ).first()
+        return int(row[0] or 0) if row else 0
+
+
+def blocking_survey_for_teacher(teacher_id):
+    """Incomplete survey due within 24 hours (or overdue). Blocks the app."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT s.surveyid AS survey_id,
+                       s.surveyDate AS due_at,
+                       s.title,
+                       s.description
+                FROM Survey s
+                WHERE {_survey_assigned_clause()}
+                  AND s.surveyDate <= UTC_TIMESTAMP() + INTERVAL 1 DAY
+                  AND (
+                    SELECT COUNT(*) FROM Question q WHERE q.surveyid = s.surveyid
+                  ) > 0
+                  AND (
+                    SELECT COUNT(DISTINCT a.questionid)
+                    FROM Answer a
+                    JOIN Question q ON q.questionid = a.questionid
+                    WHERE q.surveyid = s.surveyid
+                      AND a.teacherid = :teacher_id
+                  ) < (
+                    SELECT COUNT(*) FROM Question q WHERE q.surveyid = s.surveyid
+                  )
+                ORDER BY s.surveyDate ASC, s.surveyid ASC
+                LIMIT 1
+                """
+            ),
+            {"teacher_id": int(teacher_id)},
+        ).mappings().first()
+        if not row:
+            return None
+        due = row["due_at"]
+        return {
+            "survey_id": int(row["survey_id"]),
+            "title": row["title"],
+            "description": row["description"],
+            "due_at": due.isoformat(sep=" ") if hasattr(due, "isoformat") else str(due),
+        }
+
+
+def teacher_can_access_survey(teacher_id, survey_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT 1
+                FROM Survey s
+                WHERE s.surveyid = :survey_id
+                  AND {_survey_assigned_clause()}
+                LIMIT 1
+                """
+            ),
+            {"teacher_id": int(teacher_id), "survey_id": int(survey_id)},
+        ).first()
+        return row is not None
+
+
+def save_survey_answers(teacher_id, survey_id, answers):
+    """
+    Replace this teacher's answers for the survey.
+    answers: mapping of question_id -> content string.
+    """
+    if not teacher_can_access_survey(teacher_id, survey_id):
+        raise ValueError("That survey is not available.")
+    with engine.begin() as conn:
+        questions = conn.execute(
+            text(
+                """
+                SELECT questionid
+                FROM Question
+                WHERE surveyid = :survey_id
+                ORDER BY questionid ASC
+                """
+            ),
+            {"survey_id": int(survey_id)},
+        ).all()
+        question_ids = [int(row[0]) for row in questions]
+        if not question_ids:
+            raise ValueError("This survey has no questions yet.")
+        cleaned = {}
+        for qid in question_ids:
+            raw = answers.get(qid, answers.get(str(qid)))
+            content = (raw or "").strip()
+            if not content:
+                raise ValueError("Answer every question before submitting.")
+            cleaned[qid] = content[:8000]
+        for qid, content in cleaned.items():
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM Answer
+                    WHERE teacherid = :teacher_id AND questionid = :question_id
+                    """
+                ),
+                {"teacher_id": int(teacher_id), "question_id": qid},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO Answer (content, teacherid, questionid, answertime)
+                    VALUES (:content, :teacher_id, :question_id, UTC_TIMESTAMP())
+                    """
+                ),
+                {
+                    "content": content,
+                    "teacher_id": int(teacher_id),
+                    "question_id": qid,
+                },
+            )

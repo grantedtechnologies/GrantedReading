@@ -16,9 +16,12 @@
     <div class="account-menu">
       <button type="button" class="avatar account-menu-btn" id="account-menu-toggle" aria-label="Account menu" aria-expanded="false" aria-haspopup="true" aria-controls="account-menu">
         {{ session.teacher_name.split()[0][0] }}{{ session.teacher_name.split()[-1][0] }}
+        {% if survey_pending_count %}
+        <span class="survey-bubble" aria-label="{{ survey_pending_count }} survey{{ 's' if survey_pending_count != 1 else '' }} waiting">{{ survey_pending_count if survey_pending_count < 10 else '9+' }}</span>
+        {% endif %}
       </button>
       <div class="account-menu-dropdown" id="account-menu" hidden>
-        <a href="/account">Account</a>
+        <a href="/account#surveys">Account{% if survey_pending_count %} <span class="survey-menu-dot" aria-hidden="true"></span>{% endif %}</a>
         <a href="/logout">Sign out</a>
       </div>
     </div>
@@ -103,11 +106,39 @@
   nav.topnav .app-nav-link { font-weight: 800; }
   .account-menu { position: relative; }
   .account-menu-btn {
+    position: relative;
     cursor: pointer;
     padding: 0;
     font: inherit;
     appearance: none;
     -webkit-appearance: none;
+  }
+  .survey-bubble {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #dc2626;
+    color: #fff;
+    font-family: var(--font, 'Nunito', sans-serif);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 18px;
+    text-align: center;
+    border: 2px solid #fff;
+    box-sizing: border-box;
+  }
+  .survey-menu-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: #dc2626;
+    vertical-align: middle;
   }
   .account-menu-dropdown {
     position: absolute;
