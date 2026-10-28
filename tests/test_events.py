@@ -172,9 +172,11 @@ def test_each_action_writes_one_event(mysql, monkeypatch):
             "img",
             None,
             {"final": {"estimated_grade": 2}},
+            False,
+            None,
         )
 
-    monkeypatch.setattr(app_module.ai, "generate_full_worksheet", fake_generate)
+    monkeypatch.setattr(app_module.llm_pipeline, "generate_full_worksheet", fake_generate)
 
     app_module.app.config["TESTING"] = True
     client = app_module.app.test_client()
@@ -487,7 +489,7 @@ def test_generation_timeout_and_unverified_login(mysql, monkeypatch):
     def timed_out(*_args, **_kwargs):
         raise TimeoutError("llm timed out")
 
-    monkeypatch.setattr(app_module.ai, "generate_full_worksheet", timed_out)
+    monkeypatch.setattr(app_module.llm_pipeline, "generate_full_worksheet", timed_out)
     app_module.app.config["TESTING"] = True
     client = app_module.app.test_client()
     before = _max_event_id()
@@ -531,7 +533,7 @@ def test_generation_timeout_and_unverified_login(mysql, monkeypatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("foundry rejected the request")
 
-    monkeypatch.setattr(app_module.ai, "build_pdf_bytes", boom)
+    monkeypatch.setattr(app_module.llm_pipeline, "build_pdf_bytes", boom)
     before = _max_event_id()
     updated = client.post("/update-pdf", json={
         "title": "Sample",

@@ -1,40 +1,30 @@
+"""Worksheet + leveling pipeline.
+
+Uses reading_level.score for measurement and llm.py for Foundry calls.
+Illustration calls go through image_gen.py.
+"""
+
+from __future__ import annotations
+
 import base64
 import json
 import logging
-import os
 import re
-import threading
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 import file
-import requests
-from azure.ai.projects import AIProjectClient
-from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
-from azure.identity import ClientSecretCredential
-from requests.exceptions import ConnectionError as RequestsConnectionError
-from requests.exceptions import Timeout as RequestsTimeout
-from dotenv import load_dotenv
-
-import ai_rewrite
-from reading_level import ReadingLevelError, correct_text, measured_without_repair, score_text
-from reading_level import bands as rl_bands
-from reading_level import config as rl_config
-from reading_level.blocks import BLOCK_TYPES, WorksheetBlock, segment_worksheet_bytes
+from image_gen import create_image_prompt, generate_image
+from llm import FOUNDRY_DOWN, generate_json, generate_text, user_error_message
+from reading_level import ReadingLevelError, score_text
 from reading_level import dok as rl_dok
-
-load_dotenv(override=True)
+from reading_level import score as rl_score
+from reading_level.word_frequency import LEVEL_VOCAB_PROMPT_LIMIT, vocab_for_level
+from worksheet_blocks import BLOCK_TYPES, WorksheetBlock, segment_worksheet_bytes
 
 logger = logging.getLogger(__name__)
 
-LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "").rstrip("/")
-LLM_AGENT_NAME = os.getenv("LLM_AGENT_NAME", "")
-# Optional. When unset, worksheet JSON calls use the model named on the agent
-# (for example DeepSeek-V4-Flash) through the project OpenAI endpoint.
-LLM_MODEL = (os.getenv("LLM_MODEL") or "").strip()
-FLUX_API_KEY = os.getenv("FLUX_API_KEY", "")
-FLUX_API_URL = os.getenv("FLUX_API_URL", "")
-FLUX_MODEL = os.getenv("FLUX_MODEL", "")
 
-# Keep story short enough that title + illustration + questions fit on one A4 page.
 STORY_MAX_CHARS = 900
 QUESTION_MAX_CHARS = 140
 TITLE_MAX_CHARS = 60
@@ -68,280 +58,294 @@ Respond with ONLY valid JSON (no markdown, no extra text) in this exact shape:
   }}
 }}"""
 
-
-def _llm_endpoint():
-    """Project URL from .env. Must end with /api/projects/<project-name>."""
-    endpoint = (os.getenv("LLM_ENDPOINT") or LLM_ENDPOINT).rstrip("/")
-    last = endpoint.rsplit("/", 1)[-1]
-    if not endpoint or last in ("projects", "api"):
-        raise RuntimeError(
-            "LLM_ENDPOINT must include the Foundry project name, for example "
-            "https://<resource>.services.ai.azure.com/api/projects/<project-name>."
-        )
-    return endpoint
+GenerateFn = Callable[..., str]
 
 
-FOUNDRY_AUTH_VARS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
+@dataclass
+class CorrectionResult:
+    """Thin stand-in so older callers (modulate / correct route) keep working."""
+
+    text: str
+    initial_score: rl_score.ReadingLevelScore
+    final_score: rl_score.ReadingLevelScore
+    target_band: Any
+    gate_passed: bool
+    failure_reason: str | None = None
+    edits: list = field(default_factory=list)
+    iterations: int = 0
+    score_trajectory: list = field(default_factory=list)
+    protected_terms_preserved: list = field(default_factory=list)
+    in_band: bool = False
+
+    def __post_init__(self):
+        self.in_band = self.gate_passed
 
 
-def require_foundry_config():
-    """Fail at startup when the service principal or project endpoint is absent.
+@dataclass
+class LevelOutcome:
+    """Result of leveling a passage."""
 
-    A blank value counts as missing. The client secret is never included in
-    the error text.
+    text: str
+    correction: CorrectionResult
+    final_score: rl_score.ReadingLevelScore
+    gate_passed: bool
+    target_band: Any
+    failure_reason: str | None = None
+    llm_rewrite_applied: bool = False
+    first_report: dict | None = None
+    final_report: dict | None = None
+
+
+_REWRITE_SYSTEM = """You rewrite student reading passages to match a target grade band.
+
+Rules:
+- Keep the same overall meaning, characters, and plot.
+- Do not add a title or questions.
+- Prefer the level vocabulary list when you need everyday words.
+- Replace words marked too_hard with simpler ones from level_vocab when possible.
+- Fix sentences marked too_long (split or shorten) or too_short (combine or expand).
+- Preserve every protected term exactly as written (spelling unchanged).
+- Return ONLY the rewritten passage as plain text. No JSON, no markdown."""
+
+
+def _brief_for_prompt(report: dict[str, Any], protected_terms: list[str]) -> str:
+    """Compact JSON the model can follow."""
+    hard_words = [w["word"] for w in report["too_hard"]["words"][:25]]
+    easy_words = [w["word"] for w in report["too_easy"]["words"][:15]]
+    long_sents = [s["sentence"] for s in report["too_hard"]["sentences"][:8]]
+    short_sents = [s["sentence"] for s in report["too_easy"]["sentences"][:8]]
+    vocab = report.get("level_vocab") or []
+
+    direction = (
+        "The passage scores BELOW the band — make vocabulary and sentences "
+        "a bit richer (avoid padding with only ultra-common words)."
+        if report["below_target"]
+        else "The passage scores ABOVE the band — simplify hard words and "
+        "shorten long sentences."
+    )
+
+    payload = {
+        "direction": direction,
+        "target_band": report["target_band"],
+        "estimated_grade": report["estimated_grade"],
+        "band_range": [report["target_low"], report["target_high"]],
+        "too_hard_words": hard_words,
+        "too_easy_words": easy_words,
+        "too_long_sentences": long_sents,
+        "too_short_sentences": short_sents,
+        "prefer_these_words": vocab[:80],
+        "protected_terms": list(protected_terms or []),
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _rewrite_once(
+    text: str,
+    report: dict[str, Any],
+    protected_terms: list[str],
+    generate: GenerateFn,
+) -> str:
+    user = (
+        f"Rewrite this passage for {report['target_band']}.\n\n"
+        f"Brief:\n{_brief_for_prompt(report, protected_terms)}\n\n"
+        f"Passage:\n{text.strip()}"
+    )
+    return generate(user, system=_REWRITE_SYSTEM).strip()
+
+
+def level_story(
+    text: str,
+    target_grade: int | float | str,
+    *,
+    protected_terms: list[str] | None = None,
+    allow_rewrite: bool = True,
+    generate: GenerateFn | None = None,
+    passage_type: str | None = None,
+) -> LevelOutcome:
+    """Score → optional one-shot AI rewrite → re-score.
+
+    Never raises on a band miss when allow_rewrite is used for teacher review:
+    returns the best text with gate_passed=False. Callers that need a hard
+    guarantee can check gate_passed themselves.
     """
-    missing = [
-        name for name in (*FOUNDRY_AUTH_VARS, "LLM_ENDPOINT")
-        if not (os.environ.get(name) or "").strip()
-    ]
-    if missing:
-        raise RuntimeError(
-            "Missing required environment variable(s): " + ", ".join(missing)
+    del passage_type  # kept for call-site compatibility; not used by this pipeline
+    protected = list(protected_terms or [])
+    band = rl_score.target_band(target_grade)
+    first = rl_score.analyze_passage(text, target_grade)
+    initial_score = first["score"]
+
+    if first["in_band"] or not allow_rewrite:
+        result = CorrectionResult(
+            text=text,
+            initial_score=initial_score,
+            final_score=initial_score,
+            target_band=band,
+            gate_passed=first["in_band"],
+            failure_reason=None if first["in_band"] else "outside_band",
+            protected_terms_preserved=[
+                t for t in protected if t.lower() in text.lower()
+            ],
         )
-    _llm_endpoint()
+        return LevelOutcome(
+            text=text,
+            correction=result,
+            final_score=initial_score,
+            gate_passed=first["in_band"],
+            target_band=band,
+            failure_reason=result.failure_reason,
+            llm_rewrite_applied=False,
+            first_report=rl_score.report_as_json(first),
+            final_report=rl_score.report_as_json(first),
+        )
 
+    if generate is None:
+        raise ReadingLevelError(
+            "A rewrite was needed but no generate function was provided.",
+            reason="rewrite_unavailable",
+            score=initial_score,
+            band=band,
+        )
 
-def foundry_credential():
-    require_foundry_config()
-    return ClientSecretCredential(
-        tenant_id=os.environ["AZURE_TENANT_ID"].strip(),
-        client_id=os.environ["AZURE_CLIENT_ID"].strip(),
-        client_secret=os.environ["AZURE_CLIENT_SECRET"].strip(),
+    rewritten = text
+    applied = False
+    try:
+        rewritten = _rewrite_once(text, first, protected, generate)
+        applied = rewritten.strip() != text.strip()
+    except Exception:
+        logger.exception("Reading-level rewrite failed; keeping original")
+        result = CorrectionResult(
+            text=text,
+            initial_score=initial_score,
+            final_score=initial_score,
+            target_band=band,
+            gate_passed=False,
+            failure_reason="rewrite_call_failed",
+            protected_terms_preserved=[
+                t for t in protected if t.lower() in text.lower()
+            ],
+        )
+        return LevelOutcome(
+            text=text,
+            correction=result,
+            final_score=initial_score,
+            gate_passed=False,
+            target_band=band,
+            failure_reason="rewrite_call_failed",
+            llm_rewrite_applied=False,
+            first_report=rl_score.report_as_json(first),
+            final_report=rl_score.report_as_json(first),
+        )
+
+    # Re-assert protected terms if the model dropped them.
+    final_text = rewritten
+    for term in protected:
+        if term and term.lower() not in final_text.lower() and term in text:
+            final_text = f"{final_text.rstrip()} {term}"
+
+    final = rl_score.analyze_passage(final_text, target_grade)
+    final_score = final["score"]
+    result = CorrectionResult(
+        text=final_text,
+        initial_score=initial_score,
+        final_score=final_score,
+        target_band=band,
+        gate_passed=final["in_band"],
+        failure_reason=None if final["in_band"] else "outside_band",
+        protected_terms_preserved=[
+            t for t in protected if t.lower() in final_text.lower()
+        ],
+    )
+    return LevelOutcome(
+        text=final_text,
+        correction=result,
+        final_score=final_score,
+        gate_passed=final["in_band"],
+        target_band=band,
+        failure_reason=result.failure_reason,
+        llm_rewrite_applied=applied,
+        first_report=rl_score.report_as_json(first),
+        final_report=rl_score.report_as_json(final),
     )
 
 
-def ensure_ai_configured():
-    missing = []
-    for name in FOUNDRY_AUTH_VARS:
-        if not (os.environ.get(name) or "").strip():
-            missing.append(name)
-    if not FLUX_API_KEY:
-        missing.append("FLUX_API_KEY")
-    if not (os.environ.get("LLM_ENDPOINT") or LLM_ENDPOINT).strip():
-        missing.append("LLM_ENDPOINT")
-    if not LLM_AGENT_NAME:
-        missing.append("LLM_AGENT_NAME")
-    if not FLUX_API_URL:
-        missing.append("FLUX_API_URL")
-    if not FLUX_MODEL:
-        missing.append("FLUX_MODEL")
-    # Azure Service Principal authentication
-    if not os.getenv("AZURE_CLIENT_ID"):
-        missing.append("AZURE_CLIENT_ID")
-    if not os.getenv("AZURE_CLIENT_SECRET"):
-        missing.append("AZURE_CLIENT_SECRET")
-    if not os.getenv("AZURE_TENANT_ID"):
-        missing.append("AZURE_TENANT_ID")
-    if missing:
-        logger.error("AI is not configured; missing %s", ", ".join(missing))
-        raise RuntimeError(
-            "The writing assistant is not set up yet. Ask an admin to finish Azure setup."
-        )
-    _llm_endpoint()
+def correct_text(
+    text: str,
+    target_grade: int | float | str,
+    *,
+    protected_terms: list[str] | None = None,
+) -> CorrectionResult:
+    """Measure only (no AI). Used for short answer-choice snippets."""
+    outcome = level_story(
+        text,
+        target_grade,
+        protected_terms=protected_terms,
+        allow_rewrite=False,
+    )
+    return outcome.correction
 
 
-FOUNDRY_DOWN = (
-    "Azure Foundry (the writing assistant) is not responding. "
-    "It may be down. Try again in a few minutes."
-)
-FLUX_DOWN = (
-    "Azure image generation is not responding. "
-    "The picture service may be down. Try again in a few minutes."
-)
-STORAGE_DOWN = (
-    "Azure storage is not responding. "
-    "Saved worksheets may be unavailable. Try again in a few minutes."
-)
-GENERIC_RETRY = "Something went wrong. Try again in a few minutes."
-
-_RESOURCE_DOWN = {
-    "foundry": FOUNDRY_DOWN,
-    "flux": FLUX_DOWN,
-    "storage": STORAGE_DOWN,
-}
-_RESOURCE_AUTH = {
-    "foundry": (
-        "Could not sign in to Azure Foundry. "
-        "Ask an admin to check the writing assistant credentials."
-    ),
-    "flux": (
-        "Could not sign in to Azure image generation. "
-        "Ask an admin to check the picture service credentials."
-    ),
-    "storage": (
-        "Could not sign in to Azure storage. "
-        "Ask an admin to check the storage connection."
-    ),
-}
-_RESOURCE_TIMEOUT = {
-    "foundry": "Azure Foundry took too long to respond. Try again in a few minutes.",
-    "flux": "Azure image generation took too long to respond. Try again in a few minutes.",
-    "storage": "Azure storage took too long to respond. Try again in a few minutes.",
-}
-_RESOURCE_BUSY = "Azure is busy right now. Wait a minute and try again."
-_RESOURCE_NOT_FOUND = {
-    "foundry": (
-        "Azure Foundry could not find the writing assistant. "
-        "Ask an admin to check the Foundry project."
-    ),
-    "flux": (
-        "Azure could not find the image model. "
-        "Ask an admin to check image generation setup."
-    ),
-    "storage": "That worksheet file was not found in Azure storage.",
-}
+def measured_without_repair(
+    text: str,
+    target_grade: int | float | str,
+    *,
+    protected_terms: list[str] | None = None,
+) -> CorrectionResult:
+    """Same as correct_text — name kept for older call sites."""
+    return correct_text(text, target_grade, protected_terms=protected_terms)
 
 
-def _error_text(exc) -> str:
-    if exc is None:
+def leveling_report_for_ui(
+    original_story: str,
+    outcome: LevelOutcome,
+) -> dict[str, Any]:
+    """Before/after numbers for the worksheet review panel."""
+    first = outcome.first_report or {}
+    final = outcome.final_report or {}
+    band = outcome.target_band
+    first_grade = first.get("estimated_grade", outcome.correction.initial_score.estimated_grade)
+    return {
+        "target_band": band.display,
+        "first_draft": {
+            "estimated_grade": first_grade,
+            "confidence": first.get(
+                "confidence", outcome.correction.initial_score.confidence
+            ),
+            "in_band": bool(first.get("in_band", False)),
+            "below_target": bool(first.get("below_target", False)),
+            "story": original_story,
+            "too_hard": first.get("too_hard"),
+            "too_easy": first.get("too_easy"),
+        },
+        "final": {
+            "estimated_grade": final.get(
+                "estimated_grade", outcome.final_score.estimated_grade
+            ),
+            "confidence": final.get("confidence", outcome.final_score.confidence),
+            "in_band": outcome.gate_passed,
+            "too_hard": final.get("too_hard"),
+            "too_easy": final.get("too_easy"),
+        },
+        "improved": original_story.strip() != outcome.text.strip(),
+        "llm_rewrite_applied": outcome.llm_rewrite_applied,
+    }
+
+
+def format_level_vocab_for_prompt(target_grade: int | float | str) -> str:
+    """Short block to append to worksheet generation prompts."""
+    report_grade = target_grade
+    try:
+        band = rl_score.target_band(target_grade)
+        words = vocab_for_level(band.center, limit=LEVEL_VOCAB_PROMPT_LIMIT)
+    except Exception:
+        logger.exception("Could not load level vocabulary for %s", report_grade)
         return ""
-    if isinstance(exc, dict):
-        nested = exc.get("error")
-        if isinstance(nested, dict):
-            return str(nested.get("message") or nested.get("code") or "")
-        if isinstance(nested, str):
-            return nested
-        return str(exc.get("message") or "")
-    if isinstance(exc, str):
-        return exc
-    return str(exc or "")
-
-
-def _error_status(exc):
-    if isinstance(exc, dict):
-        nested = exc.get("error") if isinstance(exc.get("error"), dict) else {}
-        for key in ("status", "status_code", "statusCode", "code"):
-            value = exc.get(key)
-            if value is None:
-                value = nested.get(key)
-            if isinstance(value, int):
-                return value
-            if isinstance(value, str) and value.isdigit():
-                return int(value)
-        return None
-    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    if isinstance(status, int):
-        return status
-    response = getattr(exc, "response", None)
-    if response is not None:
-        code = getattr(response, "status_code", None)
-        if isinstance(code, int):
-            return code
-    return None
-
-
-def _looks_like_dump(text: str) -> bool:
-    stripped = (text or "").strip()
-    if not stripped:
-        return True
-    if len(stripped) > 280:
-        return True
-    lowered = stripped.lower()
-    if stripped[:1] in "{[":
-        return True
-    if "traceback" in lowered or "httpresponseerror" in lowered:
-        return True
-    if "requestid" in lowered or "request id" in lowered:
-        return True
-    if "aadsts" in lowered or "error_description" in lowered:
-        return True
-    if '"error"' in lowered or "'error'" in lowered:
-        return True
-    if "has no attribute" in lowered or "object is not" in lowered:
-        return True
-    return False
-
-
-def _looks_technical(text: str) -> bool:
-    lowered = (text or "").lower()
-    return any(
-        needle in lowered
-        for needle in (
-            "has no attribute",
-            "object is not",
-            "nonetype",
-            "keyerror",
-            "typeerror",
-            "indexerror",
-            "attributeerror",
-        )
+    if not words:
+        return ""
+    sample = ", ".join(words[:100])
+    return (
+        f" Prefer everyday words appropriate for {band.display}, such as: "
+        f"{sample}. You do not need to use all of them; use them naturally."
     )
-
-
-def user_error_message(exc, resource="foundry") -> str:
-    """One short sentence for the teacher. Never includes JSON or Azure dumps."""
-    kind = resource if resource in _RESOURCE_DOWN else "foundry"
-    text = _error_text(exc)
-    status = _error_status(exc)
-    if isinstance(exc, dict):
-        try:
-            lowered = json.dumps(exc).lower()
-        except TypeError:
-            lowered = text.lower()
-    else:
-        lowered = text.lower()
-        known_azure = (
-            ClientAuthenticationError,
-            HttpResponseError,
-            ServiceRequestError,
-            RequestsConnectionError,
-            RequestsTimeout,
-            TimeoutError,
-            ConnectionError,
-        )
-        if (
-            isinstance(exc, Exception)
-            and not isinstance(exc, known_azure)
-            and text
-            and not _looks_like_dump(text)
-            and not _looks_technical(text)
-        ):
-            return text
-
-    if (
-        isinstance(exc, ClientAuthenticationError)
-        or status in (401, 403)
-        or "unauthorized" in lowered
-        or "authentication" in lowered
-        or "aadsts" in lowered
-        or "invalid_client" in lowered
-        or "access denied" in lowered
-        or "not authorized" in lowered
-    ):
-        return _RESOURCE_AUTH[kind]
-
-    if (
-        isinstance(exc, (TimeoutError, RequestsTimeout))
-        or status in (408, 504)
-        or "timed out" in lowered
-        or "timeout" in lowered
-    ):
-        return _RESOURCE_TIMEOUT[kind]
-
-    if status == 429 or "too many requests" in lowered or "rate limit" in lowered:
-        return _RESOURCE_BUSY
-
-    if status == 404 or "deploymentnotfound" in lowered or "resourcenotfound" in lowered:
-        return _RESOURCE_NOT_FOUND[kind]
-
-    if (
-        isinstance(exc, (HttpResponseError, ServiceRequestError, RequestsConnectionError))
-        or status in (500, 502, 503)
-        or "connection" in lowered
-        or "temporarily unavailable" in lowered
-        or "service unavailable" in lowered
-        or "foundry" in lowered
-        or "azure" in lowered
-        or "flux" in lowered
-        or "blob" in lowered
-    ):
-        return _RESOURCE_DOWN[kind]
-
-    return GENERIC_RETRY
-
-
-_PHONICS_CHUNK = re.compile(r"[A-Za-z]{2,12}")
-_STORY_WORD = re.compile(r"[A-Za-z][A-Za-z']*")
 
 
 def parse_focus_vocabulary(raw) -> list[str]:
@@ -560,6 +564,44 @@ def assign_dok_slots(
 
 def _question_keys(count: int) -> list[str]:
     return [f"q{index}" for index in range(1, count + 1)]
+
+
+def _worksheet_json_schema(question_count=5) -> dict:
+    """Strict schema for a title, story, and q1..qn questions object."""
+    keys = _question_keys(parse_question_count(question_count))
+    return {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "story": {"type": "string"},
+            "questions": {
+                "type": "object",
+                "properties": {key: {"type": "string"} for key in keys},
+                "required": keys,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["title", "story", "questions"],
+        "additionalProperties": False,
+    }
+
+
+def _questions_json_schema(question_count=5) -> dict:
+    """Strict schema for a questions-only response."""
+    keys = _question_keys(parse_question_count(question_count))
+    return {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "object",
+                "properties": {key: {"type": "string"} for key in keys},
+                "required": keys,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["questions"],
+        "additionalProperties": False,
+    }
 
 
 def ordered_question_items(questions) -> list[tuple[str, str]]:
@@ -789,6 +831,7 @@ def build_worksheet_user_prompt(
             f"naturally so the reader practices the pattern. Do not avoid "
             f"a word just because it contains the pattern."
         )
+    user_prompt += format_level_vocab_for_prompt(reading_level)
     return user_prompt
 
 
@@ -803,84 +846,6 @@ def build_worksheet_prompt(
         focus_phonics=focus_phonics,
     )
     return f"{WORKSHEET_SYSTEM_PROMPT}\n\nUser request:\n{user_prompt}"
-
-
-def _classroom_grade_label(grade) -> str | None:
-    """Turn a form value like 'K' or '9' into a short classroom label."""
-    if grade is None:
-        return None
-    raw = str(grade).strip()
-    if not raw:
-        return None
-    lowered = raw.lower()
-    if lowered in ("k", "kg", "kindergarten"):
-        return "kindergarten"
-    match = re.match(r"^(\d+)", lowered)
-    if not match:
-        return raw
-    number = int(match.group(1))
-    if number == 1:
-        ordinal = "1st"
-    elif number == 2:
-        ordinal = "2nd"
-    elif number == 3:
-        ordinal = "3rd"
-    else:
-        ordinal = f"{number}th"
-    return f"{ordinal} grade"
-
-
-def _typical_student_age(grade) -> str | None:
-    if grade is None:
-        return None
-    raw = str(grade).strip().lower()
-    if raw in ("k", "kg", "kindergarten"):
-        return "5-6 year olds"
-    match = re.match(r"^(\d+)", raw)
-    if not match:
-        return None
-    number = int(match.group(1))
-    younger = number + 5
-    return f"{younger}-{younger + 1} year olds"
-
-
-_NO_TEXT_IN_IMAGE = (
-    "The image must be a picture only. Do not paint, overlay, or caption any "
-    "typed-out text anywhere in the image: no worksheet title, no story "
-    "sentences, no action-beat lines, no captions, no labels, no speech "
-    "bubbles with readable words, no watermarks, no signatures, and no "
-    "letters or numbers of any kind. Use the story only as a description of "
-    "what to draw, never as text to put in the picture."
-)
-
-
-def create_image_prompt(title, story, feedback=None, grade=None):
-    """Illustration brief. Age the characters to the student's classroom grade,
-    not their reading level — a 9th grader who reads at grade 3 still looks 14.
-
-    Do not put the title in the prompt as a label to draw. Flux treats
-    "titled '...'" as text to paint on the image.
-    """
-    del title  # kept on the signature for callers; never send it to Flux
-    scene = (story or "").strip()[:200]
-    classroom = _classroom_grade_label(grade)
-    ages = _typical_student_age(grade)
-    if classroom and ages:
-        prompt = (
-            f"An educational illustration for a {classroom} classroom. "
-            f"Characters should look like typical {classroom} "
-            f"students ({ages}): age-appropriate faces, clothing, and setting. "
-            f"Do not depict younger children unless the story requires it. "
-            f"Scene to draw: {scene} {_NO_TEXT_IN_IMAGE}"
-        )
-    else:
-        prompt = (
-            f"An educational illustration. Scene to draw: {scene} "
-            f"{_NO_TEXT_IN_IMAGE}"
-        )
-    if feedback:
-        prompt += f" Additional instructions: {feedback.strip()}"
-    return prompt
 
 
 def validate_structure(data):
@@ -912,252 +877,6 @@ def normalize_model_output(data):
     for index, (_key, stem) in enumerate(ordered_question_items(data.get("questions")), start=1):
         payload[f"Q{index}"] = _clip_chars(stem, QUESTION_MAX_CHARS)
     return payload
-
-
-_client_lock = threading.Lock()
-_project_client = None
-_openai_client = None
-_structured_client = None
-_structured_model = None
-
-
-def _get_openai_client():
-    """Reuse one project client, authenticated as the Foundry service principal."""
-    global _project_client, _openai_client
-    if _openai_client is not None:
-        return _project_client, _openai_client
-
-    with _client_lock:
-        if _openai_client is not None:
-            return _project_client, _openai_client
-
-        endpoint = _llm_endpoint()
-        logger.info("Azure project endpoint: %s", endpoint)
-        _project_client = AIProjectClient(
-            endpoint=endpoint,
-            credential=foundry_credential(),
-            allow_preview=True,
-        )
-        _openai_client = _project_client.get_openai_client(
-            agent_name=LLM_AGENT_NAME,
-            timeout=None,
-        )
-        return _project_client, _openai_client
-
-
-def _get_structured_client():
-    """OpenAI client on the project endpoint (no agent).
-
-    Foundry agents only expose the Responses protocol and reject structured
-    ``response_format`` / ``text.format``. Worksheet JSON calls use this
-    client against the agent's model deployment instead.
-    """
-    global _structured_client
-    project, _ = _get_openai_client()
-    if _structured_client is not None:
-        return _structured_client
-    with _client_lock:
-        if _structured_client is None:
-            _structured_client = project.get_openai_client(timeout=None)
-        return _structured_client
-
-
-def _structured_model_name():
-    """Deployment used for enforced JSON. Prefer LLM_MODEL, else the agent's model."""
-    global _structured_model
-    if LLM_MODEL:
-        return LLM_MODEL
-    if _structured_model:
-        return _structured_model
-    with _client_lock:
-        if _structured_model:
-            return _structured_model
-        project, _ = _get_openai_client()
-        details = project.agents.get(agent_name=LLM_AGENT_NAME)
-        payload = details.as_dict() if hasattr(details, "as_dict") else dict(details)
-        model = (
-            payload.get("versions", {})
-            .get("latest", {})
-            .get("definition", {})
-            .get("model")
-        )
-        if not model:
-            raise RuntimeError(
-                "Could not find the writing model on the Foundry agent. "
-                "Set LLM_MODEL to the deployment name."
-            )
-        _structured_model = str(model)
-        logger.info("Worksheet JSON model: %s", _structured_model)
-        return _structured_model
-
-
-def generate_text(prompt):
-    """Free-text model call. Used for rewrites and other open-ended writing."""
-    ensure_ai_configured()
-    try:
-        _, openai_client = _get_openai_client()
-        response = openai_client.responses.create(input=prompt)
-    except Exception as exc:
-        raise RuntimeError(user_error_message(exc, "foundry")) from exc
-    text = response.output_text
-    if text is None or not str(text).strip():
-        raise RuntimeError(FOUNDRY_DOWN)
-    return text
-
-
-def _worksheet_json_schema(question_count=5) -> dict:
-    """Strict schema for a title, story, and q1..qn questions object."""
-    keys = _question_keys(parse_question_count(question_count))
-    return {
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "story": {"type": "string"},
-            "questions": {
-                "type": "object",
-                "properties": {key: {"type": "string"} for key in keys},
-                "required": keys,
-                "additionalProperties": False,
-            },
-        },
-        "required": ["title", "story", "questions"],
-        "additionalProperties": False,
-    }
-
-
-def _questions_json_schema(question_count=5) -> dict:
-    """Strict schema for a questions-only response."""
-    keys = _question_keys(parse_question_count(question_count))
-    return {
-        "type": "object",
-        "properties": {
-            "questions": {
-                "type": "object",
-                "properties": {key: {"type": "string"} for key in keys},
-                "required": keys,
-                "additionalProperties": False,
-            },
-        },
-        "required": ["questions"],
-        "additionalProperties": False,
-    }
-
-
-def _parse_json_object(raw_text) -> dict | None:
-    """Pull a JSON object out of a model reply, including fenced markdown."""
-    if raw_text is None or not str(raw_text).strip():
-        return None
-    text = str(raw_text).strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def generate_json(prompt, schema, *, name="response", system=None) -> dict:
-    """Enforced JSON via chat.completions response_format (strict schema).
-
-    Used for worksheet story/questions replies that feed the PDF HTML. Rewrites
-    still use generate_text through the agent.
-    """
-    ensure_ai_configured()
-    messages = [
-        {
-            "role": "system",
-            "content": system
-            or "Return only valid JSON that matches the required schema.",
-        },
-        {"role": "user", "content": prompt},
-    ]
-    try:
-        client = _get_structured_client()
-        response = client.chat.completions.create(
-            model=_structured_model_name(),
-            messages=messages,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": name,
-                    "strict": True,
-                    "schema": schema,
-                },
-            },
-        )
-    except Exception as exc:
-        raise RuntimeError(user_error_message(exc, "foundry")) from exc
-    try:
-        content = response.choices[0].message.content
-    except (AttributeError, IndexError, TypeError) as exc:
-        raise RuntimeError(FOUNDRY_DOWN) from exc
-    data = _parse_json_object(content)
-    if data is not None:
-        return data
-    if name in ("worksheet", "leveled_passage"):
-        return parse_worksheet_output(content or "")
-    raise RuntimeError(
-        "The writing assistant returned a response that could not be read. "
-        "Try generating again."
-    )
-
-
-def generate_image(image_prompt):
-    ensure_ai_configured()
-    url = f"{FLUX_API_URL.rstrip('/')}?api-version=preview"
-
-    headers = {
-        "Authorization": f"Bearer {FLUX_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "model": FLUX_MODEL,
-        "prompt": image_prompt,
-        "width": 1024,
-        "height": 1024,
-        "output_format": "jpeg",
-        "num_images": 1,
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=None)
-    except Exception as exc:
-        raise RuntimeError(user_error_message(exc, "flux")) from exc
-
-    try:
-        data = response.json()
-    except ValueError:
-        data = {}
-
-    if response.status_code >= 400:
-        payload = dict(data) if isinstance(data, dict) else {}
-        payload.setdefault("status_code", response.status_code)
-        raise RuntimeError(user_error_message(payload, "flux"))
-    if not isinstance(data, dict) or "data" not in data:
-        raise RuntimeError(
-            "Azure image generation did not return a picture. Try generating again."
-        )
-
-    try:
-        img = data["data"][0]
-    except (IndexError, KeyError, TypeError):
-        raise RuntimeError(
-            "Azure image generation did not return a picture. Try generating again."
-        )
-
-    if "b64_json" in img:
-        return img["b64_json"]
-
-    if "url" in img:
-        try:
-            img_bytes = requests.get(img["url"], timeout=None).content
-        except Exception as exc:
-            raise RuntimeError(user_error_message(exc, "flux")) from exc
-        return base64.b64encode(img_bytes).decode()
-
-    raise RuntimeError("Azure image generation did not return a picture. Try generating again.")
 
 
 def parse_worksheet_output(raw_text):
@@ -1235,12 +954,16 @@ def generate_worksheet_content(
         focus_vocabulary=focus_vocabulary,
         focus_phonics=focus_phonics,
     )
-    model_data = generate_json(
-        prompt,
-        _worksheet_json_schema(5),
-        name="worksheet",
-        system=WORKSHEET_SYSTEM_PROMPT,
-    )
+    try:
+        model_data = generate_json(
+            prompt,
+            _worksheet_json_schema(5),
+            name="worksheet",
+            system=WORKSHEET_SYSTEM_PROMPT,
+        )
+    except RuntimeError:
+        # Rare: model ignored the schema. Try a loose parse before failing.
+        raise
     validate_structure(model_data)
     return model_data, json.dumps(model_data)
 
@@ -1250,51 +973,34 @@ def build_pdf_bytes(
     image_feedback=None,
     existing_image_base64=None,
     grade=None,
+    *,
+    include_image=True,
 ):
     pdf_json = normalize_model_output(worksheet_content)
     student_grade = grade if grade is not None else worksheet_content.get("grade")
+    image_base64 = None
 
-    if image_feedback:
-        image_prompt = create_image_prompt(
-            pdf_json["Title"],
-            pdf_json["Story"],
-            feedback=image_feedback,
-            grade=student_grade,
-        )
-        image_base64 = generate_image(image_prompt)
-    elif existing_image_base64:
-        image_base64 = existing_image_base64
-    else:
-        image_prompt = create_image_prompt(
-            pdf_json["Title"], pdf_json["Story"], grade=student_grade
-        )
-        image_base64 = generate_image(image_prompt)
+    if include_image:
+        if image_feedback:
+            image_prompt = create_image_prompt(
+                pdf_json["Title"],
+                pdf_json["Story"],
+                feedback=image_feedback,
+                grade=student_grade,
+            )
+            image_base64 = generate_image(image_prompt)
+        elif existing_image_base64:
+            image_base64 = existing_image_base64
+        else:
+            image_prompt = create_image_prompt(
+                pdf_json["Title"], pdf_json["Story"], grade=student_grade
+            )
+            image_base64 = generate_image(image_prompt)
 
-    pdf_json["image"] = f"data:image/jpeg;base64,{image_base64}"
+    if image_base64:
+        pdf_json["image"] = f"data:image/jpeg;base64,{image_base64}"
     pdf_bytes = file.generate_worksheet_pdf(pdf_json)
     return pdf_bytes, image_base64
-
-
-def _leveling_report(original_story, first_score, outcome):
-    """Before/after numbers for the worksheet page comparison."""
-    band = outcome.target_band
-    return {
-        "target_band": band.display,
-        "first_draft": {
-            "estimated_grade": round(first_score.estimated_grade, 2),
-            "confidence": first_score.confidence,
-            "in_band": rl_bands.in_band(first_score, band),
-            "below_target": first_score.estimated_grade < band.low,
-            "story": original_story,
-        },
-        "final": {
-            "estimated_grade": round(outcome.final_score.estimated_grade, 2),
-            "confidence": outcome.final_score.confidence,
-            "in_band": outcome.gate_passed,
-        },
-        "improved": original_story.strip() != outcome.text.strip(),
-        "llm_rewrite_applied": outcome.llm_rewrite_applied,
-    }
 
 
 def generate_full_worksheet(
@@ -1308,18 +1014,17 @@ def generate_full_worksheet(
     dok_levels=None,
     dok_counts=None,
     dok_slots=None,
+    include_image=True,
 ):
-    """Generate a worksheet, then run the reading-level pipeline on the story.
+    """Generate a worksheet, then level the story with the simple pipeline.
 
-    The first model draft is kept so the review panel can show what the
-    pipeline changed. The PDF uses the leveled story. A leveling miss does
-    not abort the worksheet -- the closest result still ships, flagged.
-    Focus vocabulary is written into the draft 3-5 times and passed as
-    protected terms so the leveler cannot swap it for an easier word.
-    A phonics pattern is asked for in 3-5 different words; those matching
-    words are also protected so the leveler cannot strip the pattern.
-    Questions are a second, independent call at `dok_level` so changing
-    question demand cannot change the story or the leveler.
+    First draft is kept for the review panel. PDF uses the leveled story.
+    A leveling miss still ships the closest text, flagged. Focus vocabulary
+    and phonics matches are protected so the rewriter cannot drop them.
+    Questions are a second call so DOK changes cannot rewrite the story.
+
+    When include_image is True but Flux fails, the worksheet still ships
+    without a picture and image_failed is set so the UI can ask what to do.
     """
     terms = parse_focus_vocabulary(focus_vocabulary)
     phonics = parse_focus_phonics(focus_phonics)
@@ -1332,25 +1037,26 @@ def generate_full_worksheet(
     )
     model_data["grade"] = grade
     original_story = model_data["story"]
-    first_score = score_text(original_story)
     protected = _unique_protected_terms(
         terms, words_matching_phonics(original_story, phonics)
     )
 
     try:
-        outcome = correct_with_rewrite(
+        outcome = level_story(
             original_story,
             reading_level,
-            allow_rewrite=True,
-            passage_type=rl_config.PASSAGE_TYPE_NARRATIVE,
             protected_terms=protected,
+            allow_rewrite=True,
+            generate=generate_text,
+            passage_type="narrative",
         )
         model_data["story"] = outcome.text
-        leveling = _leveling_report(original_story, first_score, outcome)
+        leveling = leveling_report_for_ui(original_story, outcome)
     except (ReadingLevelError, ValueError):
         logger.exception("Reading-level pipeline failed; shipping the first draft")
+        first_score = score_text(original_story)
         try:
-            fallback_band = rl_bands.target_band(reading_level)
+            fallback_band = rl_score.target_band(reading_level)
             target_display = fallback_band.display
             below_target = first_score.estimated_grade < fallback_band.low
         except ValueError:
@@ -1400,8 +1106,34 @@ def generate_full_worksheet(
     model_data["dok_counts"] = {str(level): slots.count(level) for level in levels}
     model_data["question_count"] = count
 
-    pdf_bytes, image_base64 = build_pdf_bytes(model_data, grade=grade)
-    return model_data, pdf_bytes, image_base64, raw_text, leveling
+    image_failed = False
+    image_error = None
+    if include_image:
+        try:
+            pdf_bytes, image_base64 = build_pdf_bytes(
+                model_data, grade=grade, include_image=True
+            )
+        except Exception as exc:
+            logger.exception("Illustration failed; building PDF without an image")
+            image_failed = True
+            image_error = user_error_message(exc, "flux")
+            pdf_bytes, image_base64 = build_pdf_bytes(
+                model_data, grade=grade, include_image=False
+            )
+    else:
+        pdf_bytes, image_base64 = build_pdf_bytes(
+            model_data, grade=grade, include_image=False
+        )
+
+    return (
+        model_data,
+        pdf_bytes,
+        image_base64,
+        raw_text,
+        leveling,
+        image_failed,
+        image_error,
+    )
 
 
 def _log_stage(stage, **fields):
@@ -1442,30 +1174,17 @@ def build_leveled_prompt(topic, band, student_interest=None, feedback=None):
 
 
 def _difficulty_feedback(result):
-    """Name the specific failure so the retry prompt can act on it."""
-    if result.failure_reason == "below_target_band":
+    """Short note for a regenerate retry when leveling still misses."""
+    if getattr(result, "failure_reason", None) == "below_target_band" or (
+        getattr(result, "final_score", None)
+        and result.target_band
+        and result.final_score.estimated_grade < result.target_band.low
+    ):
         return (
             "the passage read below the target grade band "
             "(use more specific words and slightly longer sentences)"
         )
-
-    features = result.final_score.features
-    limit = rl_bands.max_sentence_length(result.target_band)
-
-    problems = []
-    if features.max_sentence_length > limit:
-        problems.append(
-            f"the sentences were too long (up to {features.max_sentence_length} "
-            f"words; keep them under {limit})"
-        )
-    if features.hard_word_ratio > 0:
-        problems.append(
-            "the vocabulary was too advanced (use shorter, more common words)"
-        )
-    if not problems:
-        problems.append("the passage read above the target grade band")
-
-    return " and ".join(problems)
+    return "the passage read above the target grade band (use shorter, more common words)"
 
 
 def _level_questions(questions, band):
@@ -1474,37 +1193,30 @@ def _level_questions(questions, band):
     A single stem is far below the length at which readability statistics mean
     anything, so these are measured and logged but never hard-gated.
     """
-    tolerant_band = rl_bands.widen(band, rl_config.QUESTION_BAND_TOLERANCE)
+    tolerant_band = rl_score.widen(band, rl_score.QUESTION_BAND_TOLERANCE)
     report = {}
 
     for key, stem in questions.items():
         score = score_text(stem)
         report[key] = {
             **_score_summary(score),
-            "in_tolerant_band": rl_bands.in_band(score, tolerant_band),
+            "in_tolerant_band": rl_score.in_band(score, tolerant_band),
         }
 
     _log_stage(
         "questions_scored",
         band=band.label,
-        tolerance=rl_config.QUESTION_BAND_TOLERANCE,
+        tolerance=rl_score.QUESTION_BAND_TOLERANCE,
         questions=report,
     )
     return report
 
 
 def _leveled_response(model_data, band, result, protected_terms, rewritten=False):
-    """Shape the API payload for an accepted passage.
-
-    Raw feature values and internal coefficients never cross this boundary.
-    """
+    """Shape the API payload for an accepted passage."""
     model_data["story"] = result.text
     questions = _level_questions(model_data["questions"], band)
     lowered = result.text.lower()
-
-    naturalness = ai_rewrite.check_naturalness(
-        result.text, band, generate=generate_text
-    )
 
     return {
         "title": model_data["title"],
@@ -1517,26 +1229,12 @@ def _leveled_response(model_data, band, result, protected_terms, rewritten=False
             "in_band": result.gate_passed,
             "confidence": result.final_score.confidence,
         },
-        "corrections_applied": len(result.edits),
+        "corrections_applied": len(getattr(result, "edits", []) or []),
         "protected_terms_preserved": [
             term for term in protected_terms if term.lower() in lowered
         ],
         "llm_rewrite_applied": rewritten,
-        "naturalness": naturalness,
     }
-
-
-def _log_correction(result, attempt):
-    for edit in result.edits:
-        _log_stage(
-            "edit_applied",
-            attempt=attempt,
-            operator=edit.operator,
-            sentence_index=edit.sentence_index,
-            before=edit.before,
-            after=edit.after,
-            sense_disambiguated=edit.sense_disambiguated,
-        )
 
 
 def correct_with_rewrite(
@@ -1547,93 +1245,19 @@ def correct_with_rewrite(
     allow_rewrite=False,
     passage_type=None,
 ):
-    """Repair `text`, optionally escalating to an LLM rewrite when repair fails.
+    """Score a passage; optionally one AI rewrite if it is outside the band.
 
-    Returns an ai_rewrite.RewriteOutcome and never raises on a content-quality
-    failure: this backs the corrector page, where a teacher is reading the
-    output and a partial improvement plus an honest "still above band" flag is
-    more useful than an error. The generation path takes the opposite line --
-    see generate_leveled_passage.
-
-    `allow_rewrite` defaults to False so the deterministic promise of this path
-    holds unless a caller explicitly asks to spend a model call.
-
-    When CORRECTION_MODE is single_pass_llm, Operators A–C are skipped and
-    Operator D runs from the first diagnostics pass. score_text still reports
-    the grade. If the rewrite fails check_semantic_drift, Operator D retries
-    once; a second failure returns the original passage with
-    rewrite_rejected_semantic_drift. The iterative path is not used as a
-    fallback on that failure — that would spend the CPU the flag is meant to
-    save, on a request that already drifted.
-
-    `passage_type` has no default here on purpose. This path takes arbitrary
-    pasted text, so nothing in the request tells us whether it is a story or a
-    science paragraph -- only the teacher knows. Omitting it warns and takes
-    the stricter tier rather than handing narrative freedom to a passage whose
-    facts a question set may depend on.
+    Never raises on a band miss — returns the best text with gate_passed=False
+    so a teacher can review it.
     """
-    protected_terms = list(protected_terms or [])
-    if rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM:
-        result = measured_without_repair(
-            text, target_grade, protected_terms=protected_terms
-        )
-    else:
-        result = correct_text(text, target_grade, protected_terms=protected_terms)
-    _log_correction(result, attempt=0)
-
-    outcome = ai_rewrite.RewriteOutcome(
-        text=result.text,
-        correction=result,
-        final_score=result.final_score,
-        gate_passed=result.gate_passed,
-        failure_reason=result.failure_reason,
-    )
-
-    # Deterministic operators only simplify, so a below-band draft is
-    # unchanged until this rewrite pass raises it.
-    if not allow_rewrite or result.gate_passed:
-        return outcome
-
-    rewritten = ai_rewrite.escalate_to_rewrite(
-        result,
+    return level_story(
+        text,
         target_grade,
-        generate=generate_text,
         protected_terms=protected_terms,
+        allow_rewrite=allow_rewrite,
+        generate=generate_text if allow_rewrite else None,
         passage_type=passage_type,
-        keep_closest=True,
     )
-    return _polish_rewrite_with_repair(rewritten, target_grade, protected_terms)
-
-
-def _polish_rewrite_with_repair(outcome, target_grade, protected_terms):
-    """Run Operators A/B on a rewrite that is still above the band.
-
-    A/B only simplify, so a below-band draft is left alone. A near-miss
-    like 3.66 on a 3.5 ceiling can still be nicked into band.
-
-    Skipped in single_pass_llm: that mode exists so the iterative loop does
-    not run on this request.
-    """
-    if rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM:
-        return outcome
-    if outcome.gate_passed or not outcome.llm_rewrite_applied:
-        return outcome
-    score = outcome.final_score
-    band = outcome.target_band
-    if score is None or band is None or score.estimated_grade <= band.high:
-        return outcome
-    polished = correct_text(
-        outcome.text, target_grade, protected_terms=protected_terms
-    )
-    if polished.gate_passed or (
-        polished.final_score.estimated_grade < score.estimated_grade
-    ):
-        outcome.text = polished.text
-        outcome.final_score = polished.final_score
-        outcome.gate_passed = polished.gate_passed
-        if polished.gate_passed:
-            outcome.failure_reason = None
-    return outcome
 
 
 def generate_leveled_passage(
@@ -1642,127 +1266,53 @@ def generate_leveled_passage(
     *,
     protected_terms=None,
     student_interest=None,
-    passage_type=rl_config.PASSAGE_TYPE_NARRATIVE,
+    passage_type="narrative",
 ):
-    """Generate a passage and guarantee it lands in the target reading band.
+    """Generate a passage and require it to land in the target band.
 
-    Returns a dict with the passage, its measured level, and correction
-    metadata.     Raises ReadingLevelError if the passage cannot be brought into
-    band -- too hard or too easy. Shipping mis-leveled material to a special
-    educator silently is a worse failure than a visible error. That is the
-    opposite of what correct_with_rewrite does, deliberately -- this output
-    goes to a student, that one goes to a teacher who is reviewing it.
-
-    Deterministic repair runs first. Only when it fails does Operator D spend a
-    model call on a diagnostic-driven rewrite.
-
-    `passage_type` defaults to narrative because that is what this path asks
-    for: WORKSHEET_SYSTEM_PROMPT requests "a short fiction story", so a rewrite
-    here is free to restructure the plot. If this flow ever grows a mode that
-    generates factual passages, that mode must pass "informational" instead --
-    the default is read off the generation prompt, not assumed.
+    Raises ReadingLevelError if the draft + one rewrite still miss.
     """
-    band = rl_bands.target_band(target_grade)
+    band = rl_score.target_band(target_grade)
     protected_terms = list(protected_terms or [])
-    feedback = None
-    last_result = None
-    last_outcome = None
 
-    # One shared budget across generation AND rewrite calls, so adding Operator
-    # D cannot multiply the number of model calls a request makes. With the
-    # default of 2 this buys one draft plus one targeted rewrite, in place of
-    # two blind drafts -- a rewrite steered by diagnostics is a better use of
-    # the second call than regenerating and hoping.
-    calls_remaining = rl_config.MAX_GENERATION_ATTEMPTS
+    prompt = build_leveled_prompt(topic, band, student_interest, feedback=None)
+    # Nudge the first draft with level vocabulary (same list the rewriter uses).
+    prompt = prompt + format_level_vocab_for_prompt(target_grade)
+    model_data = generate_json(
+        prompt,
+        _worksheet_json_schema(5),
+        name="leveled_passage",
+    )
+    validate_structure(model_data)
 
-    for attempt in range(1, rl_config.MAX_GENERATION_ATTEMPTS + 1):
-        if calls_remaining <= 0:
-            break
-
-        prompt = build_leveled_prompt(topic, band, student_interest, feedback)
-        model_data = generate_json(
-            prompt,
-            _worksheet_json_schema(5),
-            name="leveled_passage",
-        )
-        calls_remaining -= 1
-        validate_structure(model_data)
-
-        passage = model_data["story"]
-        initial = score_text(passage)
-        _log_stage(
-            "generated",
-            attempt=attempt,
-            band=band.label,
-            initial_score=_score_summary(initial),
-        )
-
-        if rl_config.correction_mode() == rl_config.CORRECTION_MODE_SINGLE_PASS_LLM:
-            result = measured_without_repair(
-                passage, target_grade, protected_terms=protected_terms
-            )
-        else:
-            result = correct_text(
-                passage, target_grade, protected_terms=protected_terms
-            )
-        last_result = result
-        _log_correction(result, attempt)
-
-        _log_stage(
-            "corrected",
-            attempt=attempt,
-            band=band.label,
-            iterations=result.iterations,
-            edits=len(result.edits),
-            score_trajectory=[round(grade, 2) for grade in result.score_trajectory],
-            in_band=result.in_band,
-            failure_reason=result.failure_reason,
-            final_score=_score_summary(result.final_score),
-            protected_terms_preserved=result.protected_terms_preserved,
-        )
-
-        if result.in_band:
-            return _leveled_response(model_data, band, result, protected_terms)
-
-        # Operator D: deterministic repair could not close the gap, so spend a
-        # call on a rewrite steered by what the scorer actually measured.
-        if calls_remaining > 0:
-            outcome = ai_rewrite.escalate_to_rewrite(
-                result,
-                target_grade,
-                generate=generate_text,
-                protected_terms=protected_terms,
-                max_attempts=calls_remaining,
-                passage_type=passage_type,
-            )
-            calls_remaining -= outcome.llm_attempts
-            last_outcome = outcome
-
-            if outcome.gate_passed:
-                model_data["story"] = outcome.text
-                return _leveled_response(
-                    model_data, band, outcome, protected_terms, rewritten=True
-                )
-
-        feedback = _difficulty_feedback(result)
-
-    failure_reason = (
-        last_outcome.failure_reason
-        if last_outcome is not None
-        else (last_result.failure_reason if last_result else None)
+    outcome = level_story(
+        model_data["story"],
+        target_grade,
+        protected_terms=protected_terms,
+        allow_rewrite=True,
+        generate=generate_text,
+        passage_type=passage_type,
     )
     _log_stage(
-        "gate_failed",
+        "leveled",
         band=band.label,
-        attempts=rl_config.MAX_GENERATION_ATTEMPTS,
-        failure_reason=failure_reason,
-        llm_rewrite_attempted=last_outcome is not None,
+        in_band=outcome.gate_passed,
+        llm_rewrite_applied=outcome.llm_rewrite_applied,
+        final_score=_score_summary(outcome.final_score),
     )
+    if outcome.gate_passed:
+        return _leveled_response(
+            model_data,
+            band,
+            outcome,
+            protected_terms,
+            rewritten=outcome.llm_rewrite_applied,
+        )
+
     raise ReadingLevelError(
-        f"Could not bring the passage into {band.display} after "
-        f"{rl_config.MAX_GENERATION_ATTEMPTS} attempts.",
-        reason=failure_reason,
-        score=last_result.final_score if last_result else None,
+        f"Could not bring the passage into {band.display}.",
+        reason=outcome.failure_reason,
+        score=outcome.final_score,
         band=band,
     )
 

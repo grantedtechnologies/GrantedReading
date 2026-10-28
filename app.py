@@ -17,7 +17,8 @@ import requests
 import stripe
 from requests.exceptions import Timeout as RequestsTimeout
 
-import ai
+import llm
+import llm_pipeline
 import billing
 import blobStorage
 import cache
@@ -27,7 +28,7 @@ import file
 from reading_level import ReadingLevelError
 
 load_dotenv(override=True)
-ai.require_foundry_config()
+llm.require_foundry_config()
 
 CONFIRM_SALT = "email-confirm"
 CONFIRM_MAX_AGE = 24 * 60 * 60
@@ -151,12 +152,12 @@ GENERATION_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 def _json_error(exc, *, resource="foundry", status=500, log="Request failed"):
     app.logger.exception(log)
-    return jsonify({"error": ai.user_error_message(exc, resource)}), status
+    return jsonify({"error": llm.user_error_message(exc, resource)}), status
 
 
 def _phonics_value(raw):
     """The letter pattern actually used, or None when none was given."""
-    pattern = ai.parse_focus_phonics(raw)
+    pattern = llm_pipeline.parse_focus_phonics(raw)
     return pattern[:255] or None
 
 
@@ -251,7 +252,7 @@ def _pdf_from_version_content(content):
     }
     if not model["story"] and not model["questions"]:
         raise LookupError("empty content")
-    return file.generate_worksheet_pdf(ai.normalize_model_output(model))
+    return file.generate_worksheet_pdf(llm_pipeline.normalize_model_output(model))
 
 
 def _load_version_pdf(teacher_id, sheet, pending_bytes=None):
@@ -1854,7 +1855,7 @@ def correct_reading_level():
         return jsonify({"error": "Choose a target grade level."}), 400
 
     try:
-        outcome = ai.correct_with_rewrite(
+        outcome = llm_pipeline.correct_with_rewrite(
             text,
             target_grade,
             protected_terms=protected_terms,
@@ -1886,7 +1887,7 @@ def correct_reading_level():
         "llm_rewrite_applied": outcome.llm_rewrite_applied,
     }
     if outcome.failure_reason == "rewrite_call_failed":
-        payload["error"] = ai.FOUNDRY_DOWN
+        payload["error"] = llm.FOUNDRY_DOWN
     return jsonify(payload)
 
 
@@ -1901,7 +1902,7 @@ def segment_worksheet():
         return jsonify({"error": "That file was empty."}), 400
     use_llm = (request.form.get("use_llm") or "false").lower() == "true"
     try:
-        blocks = ai.segment_worksheet(data, upload.filename, use_llm=use_llm)
+        blocks = llm_pipeline.segment_worksheet(data, upload.filename, use_llm=use_llm)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -1951,7 +1952,7 @@ def modulate_worksheet():
             return jsonify({"error": str(exc)}), 400
 
     try:
-        result = ai.modulate_worksheet(
+        result = llm_pipeline.modulate_worksheet(
             blocks,
             target_grade,
             source_material=source_material,
@@ -2041,7 +2042,7 @@ def generate_leveled_passage():
         return jsonify({"error": "Choose a target grade level."}), 400
 
     try:
-        result = ai.generate_leveled_passage(
+        result = llm_pipeline.generate_leveled_passage(
             topic,
             target_grade,
             protected_terms=protected_terms,
@@ -2146,14 +2147,14 @@ def generate():
     focus_vocabulary = body.get("focus_vocabulary", "")
     focus_phonics = body.get("focus_phonics", "")
     dok_raw = body.get("dok_level", 1)
-    question_count = ai.parse_question_count(body.get("question_count", 5))
+    question_count = llm_pipeline.parse_question_count(body.get("question_count", 5))
     if body.get("question_count") not in (None, ""):
         try:
             requested = int(body.get("question_count"))
         except (TypeError, ValueError):
             _log_generation_failure(teacher_id, 400, "invalid_request")
             return jsonify({"error": "Choose how many questions you want."}), 400
-        if requested < 1 or requested > ai.MAX_WORKSHEET_QUESTIONS:
+        if requested < 1 or requested > llm_pipeline.MAX_WORKSHEET_QUESTIONS:
             _log_generation_failure(teacher_id, 400, "invalid_request")
             return jsonify({"error": "Choose 1 to 8 questions."}), 400
         question_count = requested
@@ -2161,14 +2162,14 @@ def generate():
     dok_slots = None
     if str(dok_raw).strip().lower() == "custom":
         try:
-            dok_slots = ai.parse_dok_slots(body.get("dok_slots"), question_count)
+            dok_slots = llm_pipeline.parse_dok_slots(body.get("dok_slots"), question_count)
         except ValueError as exc:
             _log_generation_failure(teacher_id, 400, "invalid_request")
             return jsonify({"error": str(exc)}), 400
         dok_counts = {level: dok_slots.count(level) for level in (1, 2, 3, 4)}
         dok_levels = [level for level in (1, 2, 3, 4) if dok_counts.get(level)]
     else:
-        dok_levels = [ai.parse_dok_level(dok_raw)]
+        dok_levels = [llm_pipeline.parse_dok_level(dok_raw)]
 
     expected_level = _level_number(reading_level)
     if expected_level is None:
@@ -2182,8 +2183,22 @@ def generate():
         _log_generation_failure(teacher_id, 404 if missing else 400, "not_found" if missing else "invalid_request")
         return jsonify({"error": str(exc)}), 404 if missing else 400
 
+    include_image = body.get("include_image")
+    if include_image is None:
+        include_image = True
+    else:
+        include_image = bool(include_image)
+
     try:
-        model_data, pdf_bytes, image_base64, _, leveling = ai.generate_full_worksheet(
+        (
+            model_data,
+            pdf_bytes,
+            image_base64,
+            _,
+            leveling,
+            image_failed,
+            image_error,
+        ) = llm_pipeline.generate_full_worksheet(
             grade,
             reading_level,
             interests,
@@ -2194,6 +2209,7 @@ def generate():
             dok_levels=dok_levels,
             dok_counts=dok_counts,
             dok_slots=dok_slots,
+            include_image=include_image,
         )
         if not is_pro:
             cache.mark_worksheet_used(teacher_id)
@@ -2259,12 +2275,15 @@ def generate():
             "pdf_base64": base64.b64encode(pdf_bytes).decode(),
             "reading_level": leveling,
             "generation_id": generation_id,
+            "include_image": include_image,
+            "image_failed": bool(image_failed),
+            "image_error": image_error,
         })
     except Exception as exc:
         timed_out = isinstance(exc, (TimeoutError, RequestsTimeout)) or "timeout" in str(type(exc).__name__).lower()
         if timed_out:
             _log_generation_failure(teacher_id, 504, "llm_timeout")
-            return jsonify({"error": ai.user_error_message(exc)}), 504
+            return jsonify({"error": llm.user_error_message(exc)}), 504
         _log_generation_failure(teacher_id, 500, "generation_failed")
         return _json_error(exc, log="Worksheet generation failed")
 
@@ -2274,9 +2293,9 @@ def create_pdf():
     body = request.get_json() or {}
 
     try:
-        ai.validate_structure(body)
-        pdf_bytes, _image = ai.build_pdf_bytes(body, grade=body.get("grade"))
-        pdf_data = ai.normalize_model_output(body)
+        llm_pipeline.validate_structure(body)
+        pdf_bytes, _image = llm_pipeline.build_pdf_bytes(body, grade=body.get("grade"))
+        pdf_data = llm_pipeline.normalize_model_output(body)
         pdf_path = save_worksheet_pdf(pdf_bytes, pdf_data["Title"])
 
         return send_file(
@@ -2351,7 +2370,7 @@ def _restash_edited_generation(body, pdf_bytes, source):
         record["dokMix"] = None
     if body.get("story") and body.get("story") != old_story:
         try:
-            from reading_level.scorer import score_text
+            from reading_level import score_text
             record["trueLevel"] = _measured_level(score_text(body["story"]).estimated_grade)
         except Exception:
             pass
@@ -2365,7 +2384,13 @@ def update_pdf():
         return error
     body = request.get_json() or {}
     image_feedback = (body.get("image_feedback") or "").strip()
-    source = "regen_image" if image_feedback else "edit"
+    force_new_image = bool(body.get("force_new_image"))
+    include_image = body.get("include_image")
+    if include_image is None:
+        include_image = True
+    else:
+        include_image = bool(include_image)
+    source = "regen_image" if (image_feedback or force_new_image) else "edit"
     is_pro = billing.has_pro_access(teacher_id)
     if source != "edit" and not is_pro:
         try:
@@ -2380,16 +2405,36 @@ def update_pdf():
             return jsonify({"error": "Could not check your daily worksheet limit."}), 503
 
     try:
-        ai.validate_structure(body)
+        llm_pipeline.validate_structure(body)
         existing_image = (body.get("image_base64") or "").strip()
+        if force_new_image:
+            existing_image = ""
 
-        pdf_bytes, image_base64 = ai.build_pdf_bytes(
-            body,
-            image_feedback=image_feedback or None,
-            existing_image_base64=existing_image or None,
-            grade=body.get("grade"),
-        )
-        if source != "edit" and not is_pro:
+        try:
+            pdf_bytes, image_base64 = llm_pipeline.build_pdf_bytes(
+                body,
+                image_feedback=image_feedback or None,
+                existing_image_base64=existing_image or None,
+                grade=body.get("grade"),
+                include_image=include_image,
+            )
+            image_failed = False
+            image_error = None
+        except Exception as image_exc:
+            # Keep the edited text; ask the UI whether to ship without art.
+            if not include_image or source == "edit":
+                raise
+            app.logger.exception("Illustration failed during PDF update")
+            pdf_bytes, image_base64 = llm_pipeline.build_pdf_bytes(
+                body,
+                existing_image_base64=None,
+                grade=body.get("grade"),
+                include_image=False,
+            )
+            image_failed = True
+            image_error = llm.user_error_message(image_exc, "flux")
+
+        if source != "edit" and not is_pro and not image_failed:
             cache.mark_worksheet_used(teacher_id)
 
         return jsonify({
@@ -2397,16 +2442,19 @@ def update_pdf():
             "image_base64": image_base64,
             "pdf_base64": base64.b64encode(pdf_bytes).decode(),
             "generation_id": _restash_edited_generation(body, pdf_bytes, source),
+            "include_image": include_image,
+            "image_failed": bool(image_failed),
+            "image_error": image_error,
         })
     except Exception as exc:
         timed_out = isinstance(exc, (TimeoutError, RequestsTimeout)) or "timeout" in str(type(exc).__name__).lower()
         if timed_out:
             _log_update_failure(teacher_id, 504, "llm_timeout")
-            return jsonify({"error": ai.user_error_message(exc)}), 504
+            return jsonify({"error": llm.user_error_message(exc)}), 504
         _log_update_failure(teacher_id, 500, "update_failed")
-        hitting_flux = bool((body.get("image_feedback") or "").strip()) or not bool(
-            (body.get("image_base64") or "").strip()
-        )
+        hitting_flux = bool((body.get("image_feedback") or "").strip()) or bool(
+            body.get("force_new_image")
+        ) or not bool((body.get("image_base64") or "").strip())
         return _json_error(
             exc,
             resource="flux" if hitting_flux else "foundry",

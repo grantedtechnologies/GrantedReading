@@ -1,5 +1,4 @@
-from reading_level import config
-from reading_level.frequency import FrequencyTable
+from reading_level.word_frequency import FrequencyTable, OOV_LOGFREQ
 
 
 def test_common_words_score_higher_than_rare_words(table):
@@ -13,7 +12,7 @@ def test_lookup_is_case_insensitive(table):
 
 def test_unknown_words_return_the_default_not_zero(table):
     logfreq = table.logfreq("zzzqqxnotaword")
-    assert logfreq == config.OOV_LOGFREQ
+    assert logfreq == OOV_LOGFREQ
     assert logfreq != 0.0
 
 

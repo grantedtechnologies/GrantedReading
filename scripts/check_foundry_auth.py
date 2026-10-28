@@ -8,11 +8,11 @@ responses call — the same API worksheets use. The agent endpoint has no
 """
 import sys
 
-import ai
+import llm
 
 
 def main():
-    _project, openai_client = ai._get_openai_client()
+    _project, openai_client = llm._get_openai_client()
     response = openai_client.responses.create(input="Reply with the single word ok.")
     text = (response.output_text or "").strip()
     if not text:

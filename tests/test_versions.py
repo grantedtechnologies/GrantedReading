@@ -191,6 +191,8 @@ def test_generate_persists_initial_version(monkeypatch):
             "img",
             None,
             {"final": {"estimated_grade": 3}},
+            False,
+            None,
         )
 
     def fake_insert(teacher_id, generation_id, record, store_pdf=None):
@@ -198,7 +200,7 @@ def test_generate_persists_initial_version(monkeypatch):
         inserted["store_pdf"] = store_pdf
         return {"sheetid": 1, "versionid": 1, "generationid": generation_id}
 
-    monkeypatch.setattr(app_module.ai, "generate_full_worksheet", fake_generate)
+    monkeypatch.setattr(app_module.llm_pipeline, "generate_full_worksheet", fake_generate)
     monkeypatch.setattr(app_module.db, "insert_worksheet", fake_insert)
     monkeypatch.setattr(
         app_module.cache,
@@ -249,9 +251,9 @@ def test_update_pdf_regen_persists_child_version(monkeypatch):
         inserted["store_pdf"] = store_pdf
         return {"sheetid": 10, "versionid": 4, "generationid": generation_id}
 
-    monkeypatch.setattr(app_module.ai, "validate_structure", lambda body: None)
+    monkeypatch.setattr(app_module.llm_pipeline, "validate_structure", lambda body: None)
     monkeypatch.setattr(
-        app_module.ai,
+        app_module.llm_pipeline,
         "build_pdf_bytes",
         lambda *args, **kwargs: (b"%PDF-1.4", "new-img"),
     )

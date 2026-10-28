@@ -7,12 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-import ai
-from reading_level import bands as rl_bands
-from reading_level import config as rl_config
+import llm_pipeline
 from reading_level import dok as rl_dok
-from reading_level.blocks import segment_worksheet_bytes
-from reading_level.scorer import score_text
+from reading_level import score as rl_score
+from reading_level import score_text
+from worksheet_blocks import segment_worksheet_bytes
 
 
 WORKSHEET_LINES = [
@@ -88,7 +87,7 @@ def _sample_pdf() -> bytes:
 
 
 def _blocks_from_lines():
-    from reading_level.blocks import WorksheetBlock
+    from worksheet_blocks import WorksheetBlock
 
     return [
         WorksheetBlock("b0", "ignore", WORKSHEET_LINES[0], 0, "high"),
@@ -194,7 +193,7 @@ def test_wrapped_pdf_questions_stay_one_tag_even_with_two_marks():
 
 
 def test_oversized_source_material_is_rejected_not_truncated():
-    huge = "word " * ((rl_config.SOURCE_MATERIAL_MAX_TOKENS * rl_config.SOURCE_CHARS_PER_TOKEN) + 20)
+    huge = "word " * ((rl_dok.SOURCE_MATERIAL_MAX_TOKENS * rl_dok.SOURCE_CHARS_PER_TOKEN) + 20)
     with pytest.raises(ValueError, match="too long"):
         rl_dok.check_source_material(huge, required=False)
 
@@ -206,7 +205,7 @@ def test_test_worksheets_require_source_material():
 
 def test_dok_bucketing_is_in_the_right_ballpark():
     passage = WORKSHEET_LINES[3]
-    from reading_level.blocks import WorksheetBlock
+    from worksheet_blocks import WorksheetBlock
 
     recall = WorksheetBlock("q1", "question", "What is the dog's name?", 0, "high")
     why = WorksheetBlock("q2", "question", "Why did Sam wag his tail?", 1, "high")
@@ -230,8 +229,8 @@ def test_single_passage_corrector_path_does_not_call_modulate(monkeypatch):
         called["modulate"] = True
         raise AssertionError("worksheet modulator ran on single-passage path")
 
-    monkeypatch.setattr(ai, "modulate_worksheet", boom)
-    outcome = ai.correct_with_rewrite("Mia has a red dog. The dog is named Sam.", 1)
+    monkeypatch.setattr(llm_pipeline, "modulate_worksheet", boom)
+    outcome = llm_pipeline.correct_with_rewrite("Mia has a red dog. The dog is named Sam.", 1)
     assert called["modulate"] is False
     assert outcome.text
     assert outcome.correction is not None
@@ -239,12 +238,12 @@ def test_single_passage_corrector_path_does_not_call_modulate(monkeypatch):
 
 def _fake_correct_outcome(text, target, **kwargs):
     score = score_text(text)
-    band = rl_bands.target_band(target)
+    band = rl_score.target_band(target)
     return SimpleNamespace(
         text=text,
         correction=SimpleNamespace(initial_score=score, target_band=band),
         final_score=score,
-        gate_passed=rl_bands.in_band(score, band),
+        gate_passed=rl_score.in_band(score, band),
         llm_rewrite_applied=False,
         target_band=band,
     )
@@ -265,10 +264,10 @@ def test_modulate_increase_and_decrease_report(monkeypatch, fixture_text):
             return "Why did Sam run back to Mia with the ball?"
         return "What is the dog's name?"
 
-    monkeypatch.setattr(ai, "convert_question_to_dok", fake_convert)
-    monkeypatch.setattr(ai, "correct_with_rewrite", _fake_correct_outcome)
+    monkeypatch.setattr(llm_pipeline, "convert_question_to_dok", fake_convert)
+    monkeypatch.setattr(llm_pipeline, "correct_with_rewrite", _fake_correct_outcome)
     monkeypatch.setattr(
-        ai, "correct_text",
+        llm_pipeline, "correct_text",
         lambda text, target, **kwargs: SimpleNamespace(text=text, gate_passed=True),
     )
 
@@ -280,7 +279,7 @@ def test_modulate_increase_and_decrease_report(monkeypatch, fixture_text):
         blocks[2] = type(blocks[2])(
             blocks[2].block_id, "passage", passage, 2, "high"
         )
-        return ai.modulate_worksheet(
+        return llm_pipeline.modulate_worksheet(
             blocks,
             grade,
             source_material="Chapter notes: Mia and her dog Sam play in the park.",
@@ -316,7 +315,7 @@ def test_modulate_increase_and_decrease_report(monkeypatch, fixture_text):
 
 
 def test_modulate_converts_questions_only_when_asked(monkeypatch):
-    from reading_level.blocks import WorksheetBlock
+    from worksheet_blocks import WorksheetBlock
 
     converted = []
     infer = (
@@ -327,10 +326,10 @@ def test_modulate_converts_questions_only_when_asked(monkeypatch):
         converted.append(stem)
         return "What is the dog's name?"
 
-    monkeypatch.setattr(ai, "convert_question_to_dok", fake_convert)
-    monkeypatch.setattr(ai, "correct_with_rewrite", _fake_correct_outcome)
+    monkeypatch.setattr(llm_pipeline, "convert_question_to_dok", fake_convert)
+    monkeypatch.setattr(llm_pipeline, "correct_with_rewrite", _fake_correct_outcome)
     monkeypatch.setattr(
-        ai, "correct_text",
+        llm_pipeline, "correct_text",
         lambda text, target, **kwargs: SimpleNamespace(text=text, gate_passed=True),
     )
     blocks = [
@@ -338,13 +337,13 @@ def test_modulate_converts_questions_only_when_asked(monkeypatch):
         WorksheetBlock("q1", "question", infer, 1, "high"),
         WorksheetBlock("q2", "question", infer, 2, "high"),
     ]
-    defaulted = ai.modulate_worksheet(blocks, 3, allow_rewrite=False, title="Sam")
+    defaulted = llm_pipeline.modulate_worksheet(blocks, 3, allow_rewrite=False, title="Sam")
     assert converted == []
     assert defaulted["dok"]["converted_block_ids"] == []
     assert defaulted["blocks"][1]["text"] == infer
     assert all(fail["check"] != "dok_mix" for fail in defaulted["gate_failures"])
 
-    asked = ai.modulate_worksheet(
+    asked = llm_pipeline.modulate_worksheet(
         blocks, 3, allow_rewrite=False, convert_questions=True, title="Sam"
     )
     assert converted
@@ -352,7 +351,7 @@ def test_modulate_converts_questions_only_when_asked(monkeypatch):
 
 
 def test_legacy_unclassified_maps_to_ignore():
-    from reading_level.blocks import WorksheetBlock
+    from worksheet_blocks import WorksheetBlock
 
     block = WorksheetBlock.from_dict({
         "block_id": "x",
@@ -366,7 +365,7 @@ def test_legacy_unclassified_maps_to_ignore():
 
 
 def test_image_block_round_trips_through_from_dict():
-    from reading_level.blocks import WorksheetBlock
+    from worksheet_blocks import WorksheetBlock
 
     payload = base64.b64encode(TINY_PNG).decode()
     block = WorksheetBlock.from_dict({
@@ -385,7 +384,7 @@ def test_image_block_round_trips_through_from_dict():
 
 def test_generated_sheet_rebuild_keeps_template_html_and_image_slot():
     import file as worksheet_file
-    from reading_level.blocks import WorksheetBlock
+    from worksheet_blocks import WorksheetBlock
 
     image = base64.b64encode(TINY_PNG).decode()
     blocks = [
@@ -438,7 +437,7 @@ def test_generated_sheet_rebuild_keeps_template_html_and_image_slot():
 
 
 def test_convert_prompt_reuses_dok_definitions():
-    prompt = ai.build_convert_question_prompt(
+    prompt = llm_pipeline.build_convert_question_prompt(
         "What is the dog's name?", 3, "Mia has a dog named Sam.", "notes"
     )
     assert "Strategic Thinking" in prompt

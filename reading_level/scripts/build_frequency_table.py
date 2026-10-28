@@ -27,9 +27,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from reading_level import config  # noqa: E402
+from reading_level import score as config  # noqa: E402
 
 DEFAULT_WORDFREQ_LIMIT = 60000
+PROPER_NOUN_MIN_CAPITAL_RATIO = 0.70
+LEMMA_INHERITANCE_LOGFREQ_GAP = 0.30
 
 
 def _log_frequency(per_million: float) -> float:
@@ -92,7 +94,7 @@ def _read_subtlex(corpus_path: Path) -> dict[str, dict]:
             if existing is None or logfreq > existing["logfreq"]:
                 entries[key] = {
                     "logfreq": logfreq,
-                    "proper": capital_ratio >= config.PROPER_NOUN_MIN_CAPITAL_RATIO,
+                    "proper": capital_ratio >= PROPER_NOUN_MIN_CAPITAL_RATIO,
                 }
 
     return entries
@@ -147,7 +149,7 @@ def _apply_lemma_inheritance(entries: dict[str, dict]) -> int:
             lemma_entry = entries.get(lemma)
             if lemma_entry is None:
                 continue
-            if lemma_entry["logfreq"] - best >= config.LEMMA_INHERITANCE_LOGFREQ_GAP:
+            if lemma_entry["logfreq"] - best >= LEMMA_INHERITANCE_LOGFREQ_GAP:
                 best = max(best, lemma_entry["logfreq"])
 
         if best > entry["logfreq"]:

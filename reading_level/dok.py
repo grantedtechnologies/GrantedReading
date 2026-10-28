@@ -11,12 +11,31 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-from . import bands as rl_bands
-from . import config
-from .blocks import WorksheetBlock
-from .scorer import split_sentences
+from worksheet_blocks import WorksheetBlock
+
+from . import score as rl_score
+from .sentences import split_sentences
 
 logger = logging.getLogger(__name__)
+
+SOURCE_MATERIAL_MAX_TOKENS = 45000
+SOURCE_CHARS_PER_TOKEN = 4
+DOK_MIX_TOLERANCE = 0.25
+DOK_MIX_BY_GRADE = {
+    0: {1: 90, 2: 10, 3: 0, 4: 0},
+    1: {1: 80, 2: 20, 3: 0, 4: 0},
+    2: {1: 70, 2: 25, 3: 5, 4: 0},
+    3: {1: 55, 2: 35, 3: 10, 4: 0},
+    4: {1: 45, 2: 40, 3: 15, 4: 0},
+    5: {1: 35, 2: 40, 3: 20, 4: 5},
+    6: {1: 30, 2: 40, 3: 25, 4: 5},
+    7: {1: 25, 2: 40, 3: 30, 4: 5},
+    8: {1: 20, 2: 40, 3: 30, 4: 10},
+    9: {1: 15, 2: 35, 3: 35, 4: 15},
+    10: {1: 15, 2: 30, 3: 40, 4: 15},
+    11: {1: 10, 2: 30, 3: 40, 4: 20},
+    12: {1: 10, 2: 25, 3: 40, 4: 25},
+}
 
 SpanMatch = Literal["single_span", "multi_span", "no_match"]
 Confidence = Literal["high", "low"]
@@ -96,7 +115,7 @@ def count_source_tokens(text: str) -> int:
     """UNCALIBRATED char/token stand-in. Not a model tokenizer."""
     if not text:
         return 0
-    size = config.SOURCE_CHARS_PER_TOKEN
+    size = SOURCE_CHARS_PER_TOKEN
     return max(1, (len(text) + size - 1) // size)
 
 
@@ -112,12 +131,12 @@ def check_source_material(text: str, *, required: bool) -> int:
     logger.info(
         '{"stage": "source_tokens", "tokens": %s, "ceiling": %s}',
         tokens,
-        config.SOURCE_MATERIAL_MAX_TOKENS,
+        SOURCE_MATERIAL_MAX_TOKENS,
     )
-    if tokens > config.SOURCE_MATERIAL_MAX_TOKENS:
+    if tokens > SOURCE_MATERIAL_MAX_TOKENS:
         raise ValueError(
             "Source material is too long "
-            f"({tokens} tokens; ceiling is {config.SOURCE_MATERIAL_MAX_TOKENS}). "
+            f"({tokens} tokens; ceiling is {SOURCE_MATERIAL_MAX_TOKENS}). "
             "Narrow it to the specific chapter or section this worksheet covers. "
             "It will not be truncated automatically."
         )
@@ -126,10 +145,10 @@ def check_source_material(text: str, *, required: bool) -> int:
 
 def default_dok_mix(target_grade) -> dict[int, int]:
     """Percent mix for a grade band. UNCALIBRATED."""
-    band = rl_bands.target_band(target_grade)
+    band = rl_score.target_band(target_grade)
     grade = int(round(band.center))
     grade = min(12, max(0, grade))
-    mix = config.DOK_MIX_BY_GRADE.get(grade) or config.DOK_MIX_BY_GRADE[6]
+    mix = DOK_MIX_BY_GRADE.get(grade) or DOK_MIX_BY_GRADE[6]
     return {int(level): int(share) for level, share in mix.items()}
 
 
@@ -301,7 +320,7 @@ def mix_within_tolerance(actual: dict[int, int], target: dict[int, int], n: int)
     if n <= 0:
         return True
     drift = sum(abs(actual.get(level, 0) - target.get(level, 0)) for level in (1, 2, 3, 4)) / 2
-    return drift <= max(1, n * config.DOK_MIX_TOLERANCE)
+    return drift <= max(1, n * DOK_MIX_TOLERANCE)
 
 
 def choice_label_and_text(text: str) -> tuple[str, str]:

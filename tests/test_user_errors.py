@@ -5,17 +5,17 @@ from azure.core.exceptions import HttpResponseError
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
-import ai
+import llm
 
 
 def test_human_sentences_pass_through():
     text = "Please select a reading level."
-    assert ai.user_error_message(ValueError(text)) == text
+    assert llm.user_error_message(ValueError(text)) == text
 
 
 def test_json_dump_is_not_returned():
     raw = '{"error":{"code":"DeploymentNotFound","message":"flux exploded","requestId":"abc"}}'
-    msg = ai.user_error_message(RuntimeError(raw), "flux")
+    msg = llm.user_error_message(RuntimeError(raw), "flux")
     assert "{" not in msg
     assert "requestId" not in msg
     assert "exploded" not in msg
@@ -25,14 +25,14 @@ def test_json_dump_is_not_returned():
 def test_foundry_http_failure_mentions_writing_assistant():
     exc = HttpResponseError(message='(ServiceUnavailable) {"error":{"code":"ServiceUnavailable"}}')
     exc.status_code = 503
-    msg = ai.user_error_message(exc, "foundry")
+    msg = llm.user_error_message(exc, "foundry")
     assert "{" not in msg
     assert "Foundry" in msg
     assert "down" in msg.lower()
 
 
 def test_flux_dict_auth_failure_mentions_credentials():
-    msg = ai.user_error_message(
+    msg = llm.user_error_message(
         {"error": {"code": "Unauthorized", "message": "invalid api key"}, "status_code": 401},
         "flux",
     )
@@ -42,21 +42,21 @@ def test_flux_dict_auth_failure_mentions_credentials():
 
 
 def test_storage_timeout():
-    msg = ai.user_error_message(RequestsTimeout("timed out"), "storage")
+    msg = llm.user_error_message(RequestsTimeout("timed out"), "storage")
     assert "{" not in msg
     assert "storage" in msg.lower()
     assert "too long" in msg.lower()
 
 
 def test_connection_error_says_foundry_may_be_down():
-    msg = ai.user_error_message(RequestsConnectionError("connection refused"), "foundry")
+    msg = llm.user_error_message(RequestsConnectionError("connection refused"), "foundry")
     assert "Foundry" in msg
     assert "down" in msg.lower()
 
 
 def test_busy_is_not_a_dump():
     exc = SimpleNamespace(status_code=429)
-    msg = ai.user_error_message(exc, "foundry")
+    msg = llm.user_error_message(exc, "foundry")
     assert "busy" in msg.lower()
     assert "{" not in msg
 
@@ -82,7 +82,7 @@ def test_generate_route_hides_azure_json(monkeypatch):
             'HttpResponseError: Azure Foundry {"error":{"code":"ServiceUnavailable","message":"nope"}}'
         )
 
-    monkeypatch.setattr(app_module.ai, "generate_full_worksheet", boom)
+    monkeypatch.setattr(app_module.llm_pipeline, "generate_full_worksheet", boom)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with client.session_transaction() as sess:

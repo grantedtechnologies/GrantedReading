@@ -282,6 +282,67 @@
   select:focus, textarea:focus, input[type="text"]:focus { border-color: var(--green); }
   textarea { min-height: 100px; resize: vertical; line-height: 1.5; }
 
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .checkbox-row input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--green);
+    cursor: pointer;
+  }
+  .include-image-field .field-hint {
+    margin-top: 6px;
+    margin-bottom: 0;
+  }
+
+  .choice-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .choice-modal[hidden] { display: none !important; }
+  .choice-modal-card {
+    width: min(420px, 100%);
+    background: #fff;
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
+  }
+  .choice-modal-card h3 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    color: var(--ink);
+  }
+  .choice-modal-card p {
+    margin: 0 0 18px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .choice-modal-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .choice-modal-primary {
+    width: 100%;
+  }
+  .choice-modal-actions .btn-secondary {
+    width: 100%;
+  }
+
   .field-hint {
     margin-top: 6px;
     font-size: 12px;
@@ -1069,6 +1130,14 @@
 
         <div class="form-section-label optional">Optional</div>
 
+        <div class="field include-image-field">
+          <label class="checkbox-row" for="include-image">
+            <input type="checkbox" id="include-image" checked />
+            <span>Include an illustration</span>
+          </label>
+          <p class="field-hint">Uncheck to skip the picture and generate a text-only worksheet.</p>
+        </div>
+
         <div class="field">
           <div class="field-label-row">
             <label class="field-label" for="dok-level">Question DOK level</label>
@@ -1266,6 +1335,17 @@
   </div>
 </div>
 
+<div class="choice-modal" id="image-fail-modal" hidden>
+  <div class="choice-modal-card" role="dialog" aria-modal="true" aria-labelledby="image-fail-title">
+    <h3 id="image-fail-title">Illustration didn’t generate</h3>
+    <p id="image-fail-message">The picture service didn’t return an image. You can keep this worksheet without a picture, or try the illustration again.</p>
+    <div class="choice-modal-actions">
+      <button type="button" class="btn-secondary" id="image-fail-continue">Continue without image</button>
+      <button type="button" class="generate-btn choice-modal-primary" id="image-fail-retry">Try illustration again</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
   let selectedGrade = "";
@@ -1277,6 +1357,8 @@
   let currentImageBase64 = null;
   let reviewContent = null;
   let currentGenerationId = null;
+  let pendingImageFailData = null;
+  let wantsIllustration = true;
   let downloadInFlight = false;
   let fullscreenPdfRenderToken = 0;
 
@@ -1776,6 +1858,10 @@
 
     currentImageBase64 = data.image_base64 || null;
     currentGenerationId = data.generation_id || null;
+    if (typeof data.include_image === "boolean") {
+      wantsIllustration = data.include_image;
+      document.getElementById("include-image").checked = data.include_image;
+    }
     populateReviewPanel(reviewContent);
     showPdfFromBase64(data.pdf_base64, reviewContent.title);
     syncMobileImageReady();
@@ -1799,6 +1885,75 @@
       document.getElementById("review-ready").style.display = "flex";
       document.getElementById("review-form").style.display = "none";
       document.getElementById("review-intro").style.display = "none";
+    }
+  }
+
+  function openImageFailModal(data) {
+    pendingImageFailData = data;
+    const msg = document.getElementById("image-fail-message");
+    const detail = (data && data.image_error) ? String(data.image_error).trim() : "";
+    msg.textContent = detail
+      ? `${detail} You can keep this worksheet without a picture, or try the illustration again.`
+      : "The picture service didn’t return an image. You can keep this worksheet without a picture, or try the illustration again.";
+    document.getElementById("image-fail-modal").hidden = false;
+  }
+
+  function closeImageFailModal() {
+    document.getElementById("image-fail-modal").hidden = true;
+  }
+
+  function continueWithoutImage() {
+    const data = pendingImageFailData;
+    pendingImageFailData = null;
+    closeImageFailModal();
+    if (!data) return;
+    wantsIllustration = false;
+    document.getElementById("include-image").checked = false;
+    showWorksheetResult({ ...data, include_image: false });
+  }
+
+  async function retryFailedImage() {
+    const data = pendingImageFailData;
+    if (!data || !data.content) return;
+    const retryBtn = document.getElementById("image-fail-retry");
+    const continueBtn = document.getElementById("image-fail-continue");
+    retryBtn.disabled = true;
+    continueBtn.disabled = true;
+    retryBtn.textContent = "Trying again…";
+
+    try {
+      const payload = {
+        title: data.content.title,
+        story: data.content.story,
+        questions: data.content.questions,
+        grade: data.content.grade || selectedGrade,
+        generation_id: data.generation_id || currentGenerationId,
+        force_new_image: true,
+        include_image: true,
+      };
+      const response = await fetch("/update-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        throw new Error(await errorFromResponse(response));
+      }
+      const next = await response.json();
+      if (next.image_failed) {
+        pendingImageFailData = next;
+        openImageFailModal(next);
+        return;
+      }
+      pendingImageFailData = null;
+      closeImageFailModal();
+      showWorksheetResult(next);
+    } catch (err) {
+      showError(friendlyError(err));
+    } finally {
+      retryBtn.disabled = false;
+      continueBtn.disabled = false;
+      retryBtn.textContent = "Try illustration again";
     }
   }
 
@@ -2035,6 +2190,10 @@
       return;
     }
 
+    wantsIllustration = document.getElementById("include-image").checked;
+    const includeImage = wantsIllustration;
+    document.getElementById("step-3").style.display = includeImage ? "" : "none";
+
     const btn = document.getElementById("generate-btn");
     btn.disabled = true;
     btn.innerHTML = `<div class="spinner" style="border-color:rgba(255,255,255,0.3);border-top-color:#fff;"></div> Generating…`;
@@ -2044,8 +2203,8 @@
     setStep(1);
 
     const t2 = setTimeout(() => setStep(2), 8000);
-    const t3 = setTimeout(() => setStep(3), 20000);
-    const t4 = setTimeout(() => setStep(4), 30000);
+    const t3 = includeImage ? setTimeout(() => setStep(3), 20000) : null;
+    const t4 = setTimeout(() => setStep(4), includeImage ? 30000 : 20000);
 
     try {
       const response = await fetch("/generate", {
@@ -2062,22 +2221,27 @@
           dok_slots: dokSlots,
           question_count: questionCount,
           student_id: selectedStudent ? selectedStudent.student_id : null,
-          vocab_list_id: vocabListId
+          vocab_list_id: vocabListId,
+          include_image: includeImage
         })
       });
 
-      clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+      clearTimeout(t2); if (t3) clearTimeout(t3); clearTimeout(t4);
 
       if (!response.ok) {
         throw new Error(await errorFromResponse(response));
       }
 
       const data = await response.json();
-      showWorksheetResult(data);
       statusArea.style.display = "none";
+      if (data.image_failed) {
+        openImageFailModal(data);
+      } else {
+        showWorksheetResult(data);
+      }
 
     } catch (err) {
-      clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+      clearTimeout(t2); if (t3) clearTimeout(t3); clearTimeout(t4);
       showError(friendlyError(err));
       statusArea.style.display = "none";
     }
@@ -2128,6 +2292,10 @@
     }
     if (regenerateImage) {
       payload.image_feedback = imageFeedback;
+      payload.include_image = true;
+    } else {
+      // Keep an existing picture on text edits; do not call Flux again.
+      payload.include_image = !!currentImageBase64;
     }
     payload.generation_id = currentGenerationId;
 
@@ -2143,7 +2311,11 @@
       }
 
       const data = await response.json();
-      showWorksheetResult(data);
+      if (data.image_failed) {
+        openImageFailModal(data);
+      } else {
+        showWorksheetResult(data);
+      }
     } catch (err) {
       showError(friendlyError(err));
     } finally {
@@ -2194,8 +2366,14 @@
     if (e.key === "Escape") {
       closePdfFullscreen();
       closeImageFullscreen();
+      if (!document.getElementById("image-fail-modal").hidden) {
+        continueWithoutImage();
+      }
     }
   });
+
+  document.getElementById("image-fail-continue").addEventListener("click", continueWithoutImage);
+  document.getElementById("image-fail-retry").addEventListener("click", retryFailedImage);
 
   function showError(msg) {
     const el = document.getElementById("error-box");

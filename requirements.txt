@@ -15,27 +15,3 @@ itsdangerous==2.2.0
 flask-mail==0.10.0
 stripe==15.6.1
 user-agents==2.2.0
-
-# Reading level analysis
-spacy==3.8.13
-pysbd==0.3.4
-nltk==3.10.3
-numpy==2.5.2
-
-# Meaning-drift verification for the LLM rewrite pass (Operator D). Pulls in
-# torch, which is roughly 1 GB installed -- by far the heaviest dependency
-# here. It is loaded lazily and only on passages the deterministic operators
-# could not fix, so it costs nothing on the common path.
-#
-# spaCy's own vectors were measured first and are not usable for this: averaged
-# over a passage they score an unrelated passage at 0.90 against the source,
-# above a faithful rewrite. See reading_level/config.py DRIFT_EMBEDDING_MODEL.
-sentence-transformers==6.0.0
-
-# Three one-time downloads are also required. They are not pip packages:
-#   python -m spacy download en_core_web_md
-#   python -m nltk.downloader wordnet omw-1.4 names
-# The embedding model downloads itself on first use and caches under
-# ~/.cache/huggingface; pre-warm it in deployment so the first failing passage
-# does not pay for it:
-#   python -c "from reading_level._nlp import get_sentence_encoder; get_sentence_encoder()"
