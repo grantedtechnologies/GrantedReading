@@ -38,7 +38,7 @@ def test_flux_dict_auth_failure_mentions_credentials():
     )
     assert "{" not in msg
     assert "sign in" in msg.lower()
-    assert "image" in msg.lower()
+    assert "picture" in msg.lower()
 
 
 def test_storage_timeout():

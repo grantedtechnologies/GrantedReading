@@ -1,30 +1,28 @@
-"""Flux illustration helpers — kept outside reading_level on purpose."""
+"""Worksheet illustration helpers — kept outside reading_level on purpose.
+
+Production image generation uses RunPod (FLUX.1-schnell via vLLM-Omni).
+"""
 
 from __future__ import annotations
 
 import base64
 import logging
-import os
 import re
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+import runpod_flux
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-FLUX_API_KEY = os.getenv("FLUX_API_KEY", "")
-FLUX_API_URL = os.getenv("FLUX_API_URL", "")
-FLUX_MODEL = os.getenv("FLUX_MODEL", "")
-
+# Keep this short and first in the prompt — FLUX CLIP truncates at 77 tokens,
+# and longer "no text" rules were getting cut off (see RunPod worker warnings).
 _NO_TEXT_IN_IMAGE = (
-    "The image must be a picture only. Do not paint, overlay, or caption any "
-    "typed-out text anywhere in the image: no worksheet title, no story "
-    "sentences, no action-beat lines, no captions, no labels, no speech "
-    "bubbles with readable words, no watermarks, no signatures, and no "
-    "letters or numbers of any kind. Use the story only as a description of "
-    "what to draw, never as text to put in the picture."
+    "Picture only: no readable text, letters, numbers, captions, labels, "
+    "or watermarks anywhere in the image."
 )
 
 
@@ -67,86 +65,93 @@ def _typical_student_age(grade) -> str | None:
 
 
 def create_image_prompt(title, story, feedback=None, grade=None):
-    """Illustration brief. Characters age to classroom grade, not reading level."""
+    """Illustration brief. Characters age to classroom grade, not reading level.
+
+    Constraints come first so CLIP's 77-token window keeps them.
+    """
     del title  # callers pass it; never send it to Flux as drawable text
-    scene = (story or "").strip()[:200]
+    scene = (story or "").strip()[:120]
     classroom = _classroom_grade_label(grade)
     ages = _typical_student_age(grade)
     if classroom and ages:
         prompt = (
-            f"An educational illustration for a {classroom} classroom. "
-            f"Characters should look like typical {classroom} "
-            f"students ({ages}): age-appropriate faces, clothing, and setting. "
-            f"Do not depict younger children unless the story requires it. "
-            f"Scene to draw: {scene} {_NO_TEXT_IN_IMAGE}"
+            f"{_NO_TEXT_IN_IMAGE} "
+            f"Educational {classroom} illustration; characters look like "
+            f"typical {classroom} students ({ages}). Scene: {scene}"
         )
     else:
-        prompt = (
-            f"An educational illustration. Scene to draw: {scene} "
-            f"{_NO_TEXT_IN_IMAGE}"
-        )
+        prompt = f"{_NO_TEXT_IN_IMAGE} Educational illustration. Scene: {scene}"
     if feedback:
-        prompt += f" Additional instructions: {feedback.strip()}"
+        prompt += f" Extra: {feedback.strip()[:80]}"
     return prompt
 
 
+def image_data_url(image_base64: str, mime: str | None = None) -> str:
+    """Build a data URL; sniff PNG vs JPEG when mime is omitted."""
+    chosen = (mime or "").strip().lower()
+    if chosen.startswith("image/"):
+        return f"data:{chosen};base64,{image_base64}"
+    if chosen in ("png", "jpeg", "jpg", "webp"):
+        kind = "jpeg" if chosen == "jpg" else chosen
+        return f"data:image/{kind};base64,{image_base64}"
+    try:
+        raw = base64.b64decode((image_base64 or "")[:64] + "===")
+        if raw.startswith(b"\x89PNG"):
+            return f"data:image/png;base64,{image_base64}"
+    except Exception:
+        pass
+    return f"data:image/png;base64,{image_base64}"
+
+
 def generate_image(image_prompt):
-    """Call Flux and return a base64 JPEG string."""
+    """Call RunPod Flux and return a base64 image string (PNG)."""
     # Lazy import keeps this file free of circular imports with llm.py.
     from llm import ensure_ai_configured, user_error_message
 
     ensure_ai_configured()
-    url = f"{FLUX_API_URL.rstrip('/')}?api-version=preview"
 
-    headers = {
-        "Authorization": f"Bearer {FLUX_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": FLUX_MODEL,
-        "prompt": image_prompt,
-        "width": 1024,
-        "height": 1024,
-        "output_format": "jpeg",
-        "num_images": 1,
-    }
-
+    # Production always polls. Webhooks need a public URL + single-process store
+    # (local test_app only). Allow up to 10 minutes for cold GPU workers.
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=None)
+        result = runpod_flux.generate(
+            image_prompt,
+            size="1024x1024",
+            timeout=runpod_flux.DEFAULT_TIMEOUT_S,
+            result_mode="poll",
+        )
     except Exception as exc:
+        logger.exception("RunPod image request raised")
         raise RuntimeError(user_error_message(exc, "flux")) from exc
 
-    try:
-        data = response.json()
-    except ValueError:
-        data = {}
-
-    if response.status_code >= 400:
-        err_payload = dict(data) if isinstance(data, dict) else {}
-        err_payload.setdefault("status_code", response.status_code)
-        raise RuntimeError(user_error_message(err_payload, "flux"))
-    if not isinstance(data, dict) or "data" not in data:
-        raise RuntimeError(
-            "Azure image generation did not return a picture. Try generating again."
+    if not result.get("ok"):
+        logger.error(
+            "RunPod image failed job_id=%s via=%s elapsed_ms=%s error=%s",
+            result.get("job_id"),
+            result.get("delivered_via"),
+            result.get("elapsed_ms"),
+            result.get("error"),
         )
+        raise RuntimeError(user_error_message(result.get("error") or result, "flux"))
 
-    try:
-        img = data["data"][0]
-    except (IndexError, KeyError, TypeError):
-        raise RuntimeError(
-            "Azure image generation did not return a picture. Try generating again."
+    if result.get("b64"):
+        logger.info(
+            "RunPod image ok job_id=%s via=%s exec_ms=%s delay_ms=%s",
+            result.get("job_id"),
+            result.get("delivered_via"),
+            result.get("exec_ms"),
+            result.get("delay_ms"),
         )
+        return result["b64"]
 
-    if "b64_json" in img:
-        return img["b64_json"]
-
-    if "url" in img:
+    image_url = result.get("image_url")
+    if image_url:
         try:
-            img_bytes = requests.get(img["url"], timeout=None).content
+            img_bytes = requests.get(image_url, timeout=60).content
         except Exception as exc:
+            logger.exception("RunPod image URL download failed")
             raise RuntimeError(user_error_message(exc, "flux")) from exc
         return base64.b64encode(img_bytes).decode()
 
     raise RuntimeError(
-        "Azure image generation did not return a picture. Try generating again."
+        "Picture generation did not return a picture. Try generating again."
     )

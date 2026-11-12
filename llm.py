@@ -30,7 +30,7 @@ FOUNDRY_DOWN = (
     "It may be down. Try again in a few minutes."
 )
 FLUX_DOWN = (
-    "Azure image generation is not responding. "
+    "Picture generation is not responding. "
     "The picture service may be down. Try again in a few minutes."
 )
 STORAGE_DOWN = (
@@ -50,7 +50,7 @@ _RESOURCE_AUTH = {
         "Ask an admin to check the writing assistant credentials."
     ),
     "flux": (
-        "Could not sign in to Azure image generation. "
+        "Could not sign in to the picture service. "
         "Ask an admin to check the picture service credentials."
     ),
     "storage": (
@@ -60,7 +60,7 @@ _RESOURCE_AUTH = {
 }
 _RESOURCE_TIMEOUT = {
     "foundry": "Azure Foundry took too long to respond. Try again in a few minutes.",
-    "flux": "Azure image generation took too long to respond. Try again in a few minutes.",
+    "flux": "Picture generation took too long to respond. Try again in a few minutes.",
     "storage": "Azure storage took too long to respond. Try again in a few minutes.",
 }
 _RESOURCE_BUSY = "Azure is busy right now. Wait a minute and try again."
@@ -70,7 +70,7 @@ _RESOURCE_NOT_FOUND = {
         "Ask an admin to check the Foundry project."
     ),
     "flux": (
-        "Azure could not find the image model. "
+        "The picture service could not find the image model. "
         "Ask an admin to check image generation setup."
     ),
     "storage": "That worksheet file was not found in Azure storage.",
@@ -110,25 +110,25 @@ def foundry_credential():
 
 
 def ensure_ai_configured():
-    """Require Foundry + Flux env so worksheet generation can finish end-to-end."""
+    """Require Foundry + RunPod env so worksheet generation can finish end-to-end."""
     missing = []
     for name in FOUNDRY_AUTH_VARS:
         if not (os.environ.get(name) or "").strip():
             missing.append(name)
-    if not (os.getenv("FLUX_API_KEY") or "").strip():
-        missing.append("FLUX_API_KEY")
+    # Prefer RUNPOD_API_KEY; runpod-api-key is a deprecated local alias.
+    if not (
+        (os.getenv("RUNPOD_API_KEY") or "").strip()
+        or (os.getenv("runpod-api-key") or "").strip()
+    ):
+        missing.append("RUNPOD_API_KEY")
     if not (os.environ.get("LLM_ENDPOINT") or LLM_ENDPOINT).strip():
         missing.append("LLM_ENDPOINT")
     if not LLM_AGENT_NAME:
         missing.append("LLM_AGENT_NAME")
-    if not (os.getenv("FLUX_API_URL") or "").strip():
-        missing.append("FLUX_API_URL")
-    if not (os.getenv("FLUX_MODEL") or "").strip():
-        missing.append("FLUX_MODEL")
     if missing:
         logger.error("AI is not configured; missing %s", ", ".join(missing))
         raise RuntimeError(
-            "The writing assistant is not set up yet. Ask an admin to finish Azure setup."
+            "The writing assistant is not set up yet. Ask an admin to finish setup."
         )
     _llm_endpoint()
 
@@ -274,6 +274,7 @@ def user_error_message(exc, resource="foundry") -> str:
         or "foundry" in lowered
         or "azure" in lowered
         or "flux" in lowered
+        or "runpod" in lowered
         or "blob" in lowered
     ):
         return _RESOURCE_DOWN[kind]

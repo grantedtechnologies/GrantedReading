@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import file
-from image_gen import create_image_prompt, generate_image
+from image_gen import create_image_prompt, generate_image, image_data_url
 from llm import FOUNDRY_DOWN, generate_json, generate_text, user_error_message
 from reading_level import ReadingLevelError, score_text
 from reading_level import dok as rl_dok
@@ -998,7 +998,7 @@ def build_pdf_bytes(
             image_base64 = generate_image(image_prompt)
 
     if image_base64:
-        pdf_json["image"] = f"data:image/jpeg;base64,{image_base64}"
+        pdf_json["image"] = image_data_url(image_base64)
     pdf_bytes = file.generate_worksheet_pdf(pdf_json)
     return pdf_bytes, image_base64
 
@@ -1023,8 +1023,9 @@ def generate_full_worksheet(
     and phonics matches are protected so the rewriter cannot drop them.
     Questions are a second call so DOK changes cannot rewrite the story.
 
-    When include_image is True but Flux fails, the worksheet still ships
-    without a picture and image_failed is set so the UI can ask what to do.
+    When include_image is True but picture generation fails, the worksheet
+    still ships without a picture and image_failed is set so the UI can ask
+    what to do.
     """
     terms = parse_focus_vocabulary(focus_vocabulary)
     phonics = parse_focus_phonics(focus_phonics)

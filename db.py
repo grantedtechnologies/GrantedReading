@@ -241,11 +241,19 @@ def delete_class(teacher_id, class_id):
         )
 
 
-def list_students_for_teacher(teacher_id):
+def _query_students(teacher_id, student_id=None, class_id=None):
+    clauses = ["c.teacherid = :teacher_id"]
+    params = {"teacher_id": teacher_id}
+    if student_id is not None:
+        clauses.append("s.studentid = :student_id")
+        params["student_id"] = int(student_id)
+    if class_id is not None:
+        clauses.append("s.classid = :class_id")
+        params["class_id"] = int(class_id)
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                """
+                f"""
                 SELECT
                   s.studentid AS student_id,
                   c.teacherid AS teacher_id,
@@ -265,11 +273,11 @@ def list_students_for_teacher(teacher_id):
                 JOIN class c ON c.classid = s.classid
                 LEFT JOIN vocabList vl ON vl.studentid = s.studentid
                 LEFT JOIN words w ON w.vocabListid = vl.vocabListid
-                WHERE c.teacherid = :teacher_id
+                WHERE {" AND ".join(clauses)}
                 ORDER BY s.lname, s.fname, vl.vocabListid, w.wordid
                 """
             ),
-            {"teacher_id": teacher_id},
+            params,
         ).mappings().all()
 
     students = {}
@@ -308,6 +316,10 @@ def list_students_for_teacher(teacher_id):
         {**student, "vocab_lists": list(student["vocab_lists"].values())}
         for student in students.values()
     ]
+
+
+def list_students_for_teacher(teacher_id):
+    return _query_students(teacher_id)
 
 
 def find_teacher_by_id(teacher_id):
@@ -371,23 +383,22 @@ def search_districts(country, state, city, query=""):
     query = (query or "").replace("%", "").replace("_", "").strip()
     if not country or not state or not city:
         return []
+    # These columns use a case-insensitive collation, so equality keeps the index.
+    state_sql = "stateCode = :state" if len(state) == 2 else "state = :state"
     with engine.connect() as conn:
         result = conn.execute(
             text(
-                """
+                f"""
                 SELECT name, city, state, country
                 FROM districts
-                WHERE LOWER(country) = LOWER(:country)
+                WHERE country = :country
+                  AND {state_sql}
                   AND (
-                    LOWER(state) = LOWER(:state)
-                    OR LOWER(stateCode) = LOWER(:state)
+                    city = :city
+                    OR (CHAR_LENGTH(:city) >= 3 AND city LIKE CONCAT(:city, '%'))
                   )
-                  AND (
-                    LOWER(city) = LOWER(:city)
-                    OR (CHAR_LENGTH(:city) >= 3 AND LOWER(city) LIKE CONCAT(LOWER(:city), '%'))
-                  )
-                  AND (:query = '' OR LOWER(name) LIKE CONCAT('%', LOWER(:query), '%'))
-                ORDER BY CASE WHEN LOWER(city) = LOWER(:city) THEN 0 ELSE 1 END, name
+                  AND (:query = '' OR name LIKE CONCAT('%', :query, '%'))
+                ORDER BY CASE WHEN city = :city THEN 0 ELSE 1 END, name
                 LIMIT 40
                 """
             ),
@@ -472,25 +483,41 @@ def create_student(
 
 
 def find_class_for_teacher(teacher_id, class_id):
-    for classroom in list_classes_for_teacher(teacher_id):
-        if int(classroom["class_id"]) == int(class_id):
-            return classroom
-    return None
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                  c.classid AS class_id,
+                  c.teacherid AS teacher_id,
+                  c.subject,
+                  c.name,
+                  c.type AS class_type,
+                  c.gradeLevel AS grade_level,
+                  c.schoolYear AS school_year,
+                  COUNT(s.studentid) AS student_count
+                FROM class c
+                LEFT JOIN Students s ON s.classid = c.classid
+                WHERE c.teacherid = :teacher_id AND c.classid = :class_id
+                GROUP BY c.classid, c.teacherid, c.subject, c.name, c.type, c.gradeLevel, c.schoolYear
+                """
+            ),
+            {"teacher_id": teacher_id, "class_id": int(class_id)},
+        ).mappings().first()
+    if row is None:
+        return None
+    classroom = dict(row)
+    classroom["student_count"] = int(classroom["student_count"])
+    return classroom
 
 
 def list_students_for_class(teacher_id, class_id):
-    return [
-        student
-        for student in list_students_for_teacher(teacher_id)
-        if int(student["class_id"]) == int(class_id)
-    ]
+    return _query_students(teacher_id, class_id=class_id)
 
 
 def find_student_for_teacher(teacher_id, student_id):
-    for student in list_students_for_teacher(teacher_id):
-        if int(student["student_id"]) == int(student_id):
-            return student
-    return None
+    students = _query_students(teacher_id, student_id=student_id)
+    return students[0] if students else None
 
 
 def update_student(
@@ -590,16 +617,17 @@ def _list_owned_by(conn, teacher_id, vocab_list_id):
 
 
 def _insert_words(conn, vocab_list_id, words):
-    added = []
-    for word in words:
-        conn.execute(
-            text(
-                "INSERT INTO words (vocabListid, word) VALUES (:vocab_list_id, :word)"
-            ),
-            {"vocab_list_id": vocab_list_id, "word": word},
-        )
-        added.append(word)
-    return added
+    rows = [
+        {"vocab_list_id": vocab_list_id, "word": word}
+        for word in words
+    ]
+    if not rows:
+        return []
+    conn.execute(
+        text("INSERT INTO words (vocabListid, word) VALUES (:vocab_list_id, :word)"),
+        rows,
+    )
+    return list(words)
 
 
 def create_vocab_list(teacher_id, student_id, list_name, description, words):
@@ -843,11 +871,14 @@ def list_downloaded_versions(teacher_id, limit=None):
                        counts.download_count,
                        counts.last_downloaded
                 FROM (
-                  SELECT versionid,
+                  SELECT d.versionid,
                          COUNT(*) AS download_count,
-                         MAX(downloadedAt) AS last_downloaded
-                  FROM downloads
-                  GROUP BY versionid
+                         MAX(d.downloadedAt) AS last_downloaded
+                  FROM worksheets w
+                  STRAIGHT_JOIN versions v ON v.sheetid = w.sheetid
+                  STRAIGHT_JOIN downloads d ON d.versionid = v.versionid
+                  WHERE w.teacherid = :teacher_id
+                  GROUP BY d.versionid
                 ) counts
                 JOIN versions v ON v.versionid = counts.versionid
                 JOIN worksheets w ON w.sheetid = v.sheetid
@@ -1136,7 +1167,7 @@ def find_pilot_by_code(code):
                        d.state AS district_state, d.stateCode AS district_state_code
                 FROM Pilot p
                 JOIN districts d ON d.districtid = p.districtid
-                WHERE LOWER(p.code) = LOWER(:code)
+                WHERE p.code = :code
                 LIMIT 1
                 """
             ),
@@ -1513,11 +1544,59 @@ def list_surveys_for_teacher(teacher_id):
             _format_survey_row(row, counts, due_soon=bool(row["due_soon"]))
             for row in rows
         ]
+        questions_by_survey = _questions_for_surveys(
+            conn, teacher_id, [survey["survey_id"] for survey in surveys]
+        )
         for survey in surveys:
-            survey["questions"] = _questions_with_answers(
-                conn, teacher_id, survey["survey_id"]
-            )
+            survey["questions"] = questions_by_survey.get(survey["survey_id"], [])
         return surveys
+
+
+def _question_from_row(row):
+    answered_at = row["answered_at"]
+    return {
+        "question_id": int(row["question_id"]),
+        "content": row["content"],
+        "question_type": (row["question_type"] or "text").strip().lower(),
+        "answer": row["answer"],
+        "answered_at": (
+            answered_at.isoformat(sep=" ")
+            if hasattr(answered_at, "isoformat")
+            else None
+        ),
+    }
+
+
+def _questions_for_surveys(conn, teacher_id, survey_ids):
+    grouped = {int(survey_id): [] for survey_id in survey_ids}
+    if not survey_ids:
+        return grouped
+    placeholders = ", ".join(f":sid{i}" for i in range(len(survey_ids)))
+    params = {"teacher_id": int(teacher_id)}
+    for i, survey_id in enumerate(survey_ids):
+        params[f"sid{i}"] = int(survey_id)
+    rows = conn.execute(
+        text(
+            f"""
+            SELECT q.surveyid AS survey_id,
+                   q.questionid AS question_id,
+                   q.content,
+                   q.questionType AS question_type,
+                   a.content AS answer,
+                   a.answertime AS answered_at
+            FROM Question q
+            LEFT JOIN Answer a
+              ON a.questionid = q.questionid
+             AND a.teacherid = :teacher_id
+            WHERE q.surveyid IN ({placeholders})
+            ORDER BY q.questionid ASC
+            """
+        ),
+        params,
+    ).mappings().all()
+    for row in rows:
+        grouped[int(row["survey_id"])].append(_question_from_row(row))
+    return grouped
 
 
 def _questions_with_answers(conn, teacher_id, survey_id):
@@ -1539,23 +1618,7 @@ def _questions_with_answers(conn, teacher_id, survey_id):
         ),
         {"teacher_id": int(teacher_id), "survey_id": int(survey_id)},
     ).mappings().all()
-    out = []
-    for row in rows:
-        answered_at = row["answered_at"]
-        out.append(
-            {
-                "question_id": int(row["question_id"]),
-                "content": row["content"],
-                "question_type": (row["question_type"] or "text").strip().lower(),
-                "answer": row["answer"],
-                "answered_at": (
-                    answered_at.isoformat(sep=" ")
-                    if hasattr(answered_at, "isoformat")
-                    else None
-                ),
-            }
-        )
-    return out
+    return [_question_from_row(row) for row in rows]
 
 
 def pending_survey_count(teacher_id):
@@ -1674,26 +1737,22 @@ def save_survey_answers(teacher_id, survey_id, answers):
             if not content:
                 raise ValueError("Answer every question before submitting.")
             cleaned[qid] = content[:8000]
-        for qid, content in cleaned.items():
-            conn.execute(
-                text(
-                    """
-                    DELETE FROM Answer
-                    WHERE teacherid = :teacher_id AND questionid = :question_id
-                    """
-                ),
-                {"teacher_id": int(teacher_id), "question_id": qid},
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO Answer (content, teacherid, questionid, answertime)
-                    VALUES (:content, :teacher_id, :question_id, UTC_TIMESTAMP())
-                    """
-                ),
+        conn.execute(
+            text(
+                """
+                INSERT INTO Answer (content, teacherid, questionid, answertime)
+                VALUES (:content, :teacher_id, :question_id, UTC_TIMESTAMP()) AS new
+                ON DUPLICATE KEY UPDATE
+                  content = new.content,
+                  answertime = new.answertime
+                """
+            ),
+            [
                 {
                     "content": content,
                     "teacher_id": int(teacher_id),
                     "question_id": qid,
-                },
-            )
+                }
+                for qid, content in cleaned.items()
+            ],
+        )

@@ -204,6 +204,12 @@ CREATE TABLE `sessions`(
 );
 ALTER TABLE
     `sessions` ADD INDEX `sessions_teacherid_startedat_index`(`teacherid`, `startedAt`);
+CREATE TABLE `processed_webhook_events`(
+    `eventId` VARCHAR(255) NOT NULL,
+    `eventType` VARCHAR(255) NOT NULL,
+    `processedAt` DATETIME NOT NULL,
+    PRIMARY KEY(`eventId`)
+);
 CREATE TABLE `Events`(
     `eventid` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `eventType` VARCHAR(255) NOT NULL,
@@ -275,6 +281,8 @@ ALTER TABLE
     `worksheets` ADD CONSTRAINT `worksheets_studentid_foreign` FOREIGN KEY(`studentid`) REFERENCES `Students`(`studentid`);
 ALTER TABLE
     `Answer` ADD CONSTRAINT `answer_questionid_foreign` FOREIGN KEY(`questionid`) REFERENCES `Question`(`questionid`);
+ALTER TABLE
+    `Answer` ADD UNIQUE `answer_teacherid_questionid_unique`(`teacherid`, `questionid`);
 ALTER TABLE
     `subscriptions` ADD CONSTRAINT `subscriptions_teacherid_foreign` FOREIGN KEY(`teacherid`) REFERENCES `Teachers`(`teacherid`);
 ALTER TABLE
