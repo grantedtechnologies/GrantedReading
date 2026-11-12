@@ -254,7 +254,7 @@
             <input type="radio" name="membership" value="standard" checked />
             <div class="plan-name">Standard</div>
             <div class="plan-price">Free</div>
-            <div class="plan-note">1 worksheet a day</div>
+            <div class="plan-note">1 new worksheet a day · unlimited edits</div>
           </label>
           <label class="plan-card" id="plan-pro">
             <input type="radio" name="membership" value="pro" />
@@ -390,7 +390,7 @@
     } else if (plan === "pro") {
       note.textContent = "Pro goes to payment first. The confirmation email comes after that.";
     } else {
-      note.textContent = "Standard includes one worksheet a day.";
+      note.textContent = "Standard includes one new worksheet a day, with unlimited edits.";
     }
   }
 

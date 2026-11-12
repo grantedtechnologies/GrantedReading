@@ -2493,18 +2493,8 @@ def update_pdf():
     else:
         include_image = bool(include_image)
     source = "regen_image" if (image_feedback or force_new_image) else "edit"
-    is_pro = billing.has_pro_access(teacher_id)
-    if source != "edit" and not is_pro:
-        try:
-            if cache.worksheet_quota_used(teacher_id):
-                _log_update_failure(teacher_id, 429, "quota_exceeded")
-                return jsonify({
-                    "error": "Standard includes one worksheet a day. Upgrade to Pro for more.",
-                }), 429
-        except Exception:
-            app.logger.exception("Redis quota check failed")
-            _log_update_failure(teacher_id, 503, "update_failed")
-            return jsonify({"error": "Could not check your daily worksheet limit."}), 503
+    # Standard's daily quota is only for /generate. Edits and illustration
+    # regenerations on the worksheet they already have are unlimited.
 
     try:
         llm_pipeline.validate_structure(body)
@@ -2535,9 +2525,6 @@ def update_pdf():
             )
             image_failed = True
             image_error = llm.user_error_message(image_exc, "flux")
-
-        if source != "edit" and not is_pro and not image_failed:
-            cache.mark_worksheet_used(teacher_id)
 
         return jsonify({
             "content": body,
