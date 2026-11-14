@@ -7,7 +7,6 @@ import time
 import pytest
 
 import billing
-import cache
 import db
 
 TEST_SECRET = "whsec_test_billing_suite"

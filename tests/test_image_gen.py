@@ -22,7 +22,6 @@ def test_generate_image_uses_runpod_poll(monkeypatch):
         calls["prompt"] = prompt
         calls["size"] = size
         calls["timeout"] = timeout
-        calls["result_mode"] = kwargs.get("result_mode")
         return {
             "ok": True,
             "b64": _PNG_B64,
@@ -33,7 +32,6 @@ def test_generate_image_uses_runpod_poll(monkeypatch):
     monkeypatch.setattr(image_gen.runpod_flux, "generate", fake_generate)
     out = image_gen.generate_image("draw a lighthouse")
     assert out == _PNG_B64
-    assert calls["result_mode"] == "poll"
     assert calls["timeout"] == image_gen.runpod_flux.DEFAULT_TIMEOUT_S
     assert calls["prompt"] == "draw a lighthouse"
 
@@ -76,9 +74,6 @@ def test_ensure_ai_configured_requires_runpod_not_azure_flux(monkeypatch):
         "https://example.services.ai.azure.com/api/projects/demo",
     )
     monkeypatch.setattr(llm, "LLM_AGENT_NAME", "agent")
-    monkeypatch.delenv("FLUX_API_KEY", raising=False)
-    monkeypatch.delenv("FLUX_API_URL", raising=False)
-    monkeypatch.delenv("FLUX_MODEL", raising=False)
     monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
     monkeypatch.delenv("runpod-api-key", raising=False)
 

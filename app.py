@@ -9,8 +9,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file
 from itsdangerous import URLSafeTimedSerializer
+from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 from user_agents import parse as parse_user_agent
 import requests
@@ -27,7 +28,7 @@ import events
 import file
 from reading_level import ReadingLevelError
 
-load_dotenv(override=True)
+load_dotenv()
 llm.require_foundry_config()
 
 CONFIRM_SALT = "email-confirm"
@@ -89,20 +90,14 @@ def _send_mailtrap(subject, text, to_email, category="email_verification"):
 
 
 app = Flask(__name__)
+# SECRET_KEY still signs email verify / password-reset links (itsdangerous).
 app.secret_key = os.getenv("SECRET_KEY", "granted-dev-secret")
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"):
-    app.config["SESSION_COOKIE_SECURE"] = True
 app.config["MAIL_PASSWORD"] = _env_text("MAIL_PASSWORD")
 app.config["MAIL_DEFAULT_SENDER"] = _env_text(
     "MAIL_DEFAULT_SENDER",
     "Granted Reading <noreply@grantedreading.test>",
 )
 APP_VERSION = _env_text("APP_VERSION", "dev")
-SESSION_TOUCH_SECONDS = 60
-IDLE_TIMEOUT_SECONDS = 30 * 60
 
 
 def generate_confirmation_token(email):
@@ -419,57 +414,118 @@ def _client_device():
 
 
 def _start_login_session(teacher):
-    session.permanent = True
-    session["teacher_id"] = teacher["teacher_id"]
-    session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
-    session["teacher_email"] = teacher.get("email")
-    session_id = str(uuid.uuid4())
-    session["login_session_id"] = session_id
-    session["last_touch"] = time.time()
-    session["last_activity"] = time.time()
+    """Create MySQL analytics row + Redis session; cookie set in after_request."""
+    mysql_session_id = str(uuid.uuid4())
     device, browser, os_name = _client_device()
     db.create_login_session(
-        session_id, teacher["teacher_id"], device, browser, os_name, APP_VERSION
+        mysql_session_id, teacher["teacher_id"], device, browser, os_name, APP_VERSION
     )
+    token = cache.sessions.create_session(
+        teacher["teacher_id"],
+        mysql_session_id=mysql_session_id,
+        user_agent=request.headers.get("User-Agent") or "",
+        teacher_email=teacher.get("email") or "",
+        teacher_name=f"{teacher['first_name']} {teacher['last_name']}",
+    )
+    g.set_session_cookie = token
+    g.clear_session_cookie = False
+    # Fresh auth context for this request.
+    g._auth_loaded = True
+    g.auth_session = {
+        "teacher_id": str(teacher["teacher_id"]),
+        "mysql_session_id": mysql_session_id,
+        "teacher_email": teacher.get("email") or "",
+        "teacher_name": f"{teacher['first_name']} {teacher['last_name']}",
+    }
+    g.session_token = token
+    g.teacher_id = int(teacher["teacher_id"])
+    return token
 
 
-def _touch_login_session():
-    session_id = session.get("login_session_id")
-    if not session_id:
-        return
-    last = session.get("last_touch") or 0
-    if time.time() - last < SESSION_TOUCH_SECONDS:
-        return
-    session["last_touch"] = time.time()
+def _load_auth_session():
+    """Load Redis session once per request. Fail closed on Redis errors."""
+    if getattr(g, "_auth_loaded", False):
+        return getattr(g, "auth_session", None)
+    g._auth_loaded = True
+    g.auth_session = None
+    g.session_token = None
+    g.teacher_id = None
+    token = cache.sessions.token_from_request(request)
+    if not token:
+        return None
     try:
-        db.touch_login_session(session_id)
-    except Exception:
-        app.logger.exception("Could not touch session %s", session_id)
+        data = cache.sessions.load_and_touch(token)
+    except RedisError:
+        app.logger.exception("Redis unavailable during session check; treating as logged out")
+        g.clear_session_cookie = True
+        return None
+    if not data:
+        g.clear_session_cookie = True
+        return None
+    g.auth_session = data
+    g.session_token = token
+    g.teacher_id = int(data["teacher_id"])
+    # Approximate activity in MySQL at most every 5 minutes.
+    if cache.sessions.should_touch_mysql(data):
+        try:
+            db.touch_login_session(data.get("mysql_session_id"))
+            cache.sessions.mark_mysql_touched(token)
+        except Exception:
+            app.logger.exception(
+                "Could not touch MySQL session %s", data.get("mysql_session_id")
+            )
+    return data
 
 
-def _teacher_session(teacher):
-    session["teacher_id"] = teacher["teacher_id"]
-    session["teacher_name"] = f"{teacher['first_name']} {teacher['last_name']}"
-    session["teacher_email"] = teacher.get("email")
+def _clear_auth_session(*, end_mysql=True):
+    """End Redis (+ optional MySQL analytics) session and clear cookie."""
+    token = getattr(g, "session_token", None) or cache.sessions.token_from_request(request)
+    data = None
+    try:
+        data = cache.sessions.destroy_session(token)
+    except RedisError:
+        app.logger.exception("Redis destroy_session failed")
+    if end_mysql:
+        mysql_id = (data or {}).get("mysql_session_id") or (
+            (getattr(g, "auth_session", None) or {}).get("mysql_session_id")
+        )
+        try:
+            db.end_login_session(mysql_id)
+        except Exception:
+            app.logger.exception("Could not end MySQL session %s", mysql_id)
+    g.clear_session_cookie = True
+    g.set_session_cookie = None
+    g.auth_session = None
+    g.session_token = None
+    g.teacher_id = None
+    g._auth_loaded = True
+
+
+def _current_teacher_id():
+    data = _load_auth_session()
+    if not data:
+        return None
+    try:
+        return int(data["teacher_id"])
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def _verified_teacher():
-    teacher_id = session.get("teacher_id")
+    teacher_id = _current_teacher_id()
     if not teacher_id:
         return None
     teacher = db.find_teacher_by_id(teacher_id)
     if teacher is None:
-        session.clear()
+        _clear_auth_session()
         return None
     if not teacher.get("verified"):
         return None
-    _teacher_session(teacher)
-    _touch_login_session()
     return teacher
 
 
 def _unverified_teacher():
-    teacher_id = session.get("teacher_id")
+    teacher_id = _current_teacher_id()
     if not teacher_id:
         return None
     teacher = db.find_teacher_by_id(teacher_id)
@@ -480,26 +536,9 @@ def _unverified_teacher():
     return teacher
 
 
-def _idle_expired():
-    last = session.get("last_activity")
-    if last is None:
-        return False
-    try:
-        elapsed = time.time() - float(last)
-    except (TypeError, ValueError):
-        return False
-    return elapsed > IDLE_TIMEOUT_SECONDS
-
-
-def _mark_activity():
-    session["last_activity"] = time.time()
-    session.permanent = True
-
-
 def _end_idle_session():
-    """Close an idle session. This is not an explicit logout."""
-    db.end_login_session(session.get("login_session_id"))
-    session.clear()
+    """Close an idle/expired session. This is not an explicit logout."""
+    _clear_auth_session(end_mysql=True)
 
 
 def _session_expired_response():
@@ -513,12 +552,8 @@ def _session_expired_response():
 
 
 def _require_teacher_id():
-    if not session.get("teacher_id"):
+    if not _current_teacher_id():
         return None, _session_expired_response()
-    if _idle_expired():
-        _end_idle_session()
-        return None, _session_expired_response()
-    _mark_activity()
     if _unverified_teacher() is not None:
         return None, (jsonify({
             "error": "Confirm your email before using your account.",
@@ -527,6 +562,21 @@ def _require_teacher_id():
     if teacher is None:
         return None, _session_expired_response()
     return teacher["teacher_id"], None
+
+
+@app.after_request
+def _apply_auth_cookies(response):
+    token = getattr(g, "set_session_cookie", None)
+    if token:
+        cache.sessions.attach_cookie(response, token)
+    if getattr(g, "clear_session_cookie", False):
+        cache.sessions.clear_cookie(response)
+    pending = getattr(g, "set_pending_cookie", None)
+    if pending:
+        cache.sessions.attach_pending_cookie(response, pending)
+    if getattr(g, "clear_pending_cookie", False):
+        cache.sessions.clear_pending_cookie(response)
+    return response
 
 
 ACCOUNT_ENDPOINTS = {
@@ -590,14 +640,9 @@ def _enforce_verified_account():
         abort(404)
     if request.endpoint not in ACCOUNT_ENDPOINTS:
         return None
-    if not session.get("teacher_id"):
+    if not _current_teacher_id():
         _log_signed_out_attempt()
         return _session_expired_response()
-    if _idle_expired():
-        _end_idle_session()
-        _log_signed_out_attempt()
-        return _session_expired_response()
-    _mark_activity()
     if _unverified_teacher() is not None:
         if request.path.startswith("/api/") or request.endpoint in (
             "generate",
@@ -695,13 +740,21 @@ def _home_path_for_teacher(teacher_id):
 
 @app.route("/")
 def index():
-    if session.get("teacher_id"):
-        return redirect(_home_path_for_teacher(session.get("teacher_id")))
+    teacher_id = _current_teacher_id()
+    if teacher_id:
+        return redirect(_home_path_for_teacher(teacher_id))
+    pending_id = None
+    try:
+        pending_id = cache.sessions.load_pending_checkout(
+            cache.sessions.pending_token_from_request(request)
+        )
+    except RedisError:
+        app.logger.exception("Redis pending checkout read failed")
     return render_template(
         "login.html",
         initial_mode="signup",
         billing_canceled=request.args.get("billing") == "canceled",
-        resume_checkout=request.args.get("billing") == "canceled" and bool(session.get("pending_checkout_teacher_id")),
+        resume_checkout=request.args.get("billing") == "canceled" and bool(pending_id),
     )
 
 
@@ -720,8 +773,9 @@ def api_students():
 
 @app.route("/login")
 def login_page():
-    if session.get("teacher_id"):
-        return redirect(_home_path_for_teacher(session.get("teacher_id")))
+    teacher_id = _current_teacher_id()
+    if teacher_id:
+        return redirect(_home_path_for_teacher(teacher_id))
     return render_template(
         "login.html",
         initial_mode="signin",
@@ -896,7 +950,11 @@ def signup():
         return jsonify({"ok": True, "needs_verification": True, "email_sent": True})
 
     # Pro/Pilot: Checkout first, then the check-your-email screen after payment.
-    session["pending_checkout_teacher_id"] = teacher["teacher_id"]
+    try:
+        g.set_pending_cookie = cache.sessions.create_pending_checkout(teacher["teacher_id"])
+    except RedisError:
+        app.logger.exception("Redis pending checkout store failed")
+        return jsonify({"error": "Could not start checkout. Try again."}), 503
     base = request.host_url.rstrip("/")
     try:
         checkout_url = billing.create_checkout_session(
@@ -916,7 +974,13 @@ def signup():
 
 @app.route("/signup/checkout", methods=["POST"])
 def signup_resume_checkout():
-    teacher_id = session.get("pending_checkout_teacher_id")
+    try:
+        teacher_id = cache.sessions.load_pending_checkout(
+            cache.sessions.pending_token_from_request(request)
+        )
+    except RedisError:
+        app.logger.exception("Redis pending checkout read failed")
+        return jsonify({"error": "Could not resume checkout. Try again."}), 503
     teacher = db.find_teacher_by_id(teacher_id) if teacher_id else None
     if teacher is None or teacher.get("verified"):
         return jsonify({"error": "Start signup again."}), 400
@@ -958,7 +1022,12 @@ def signup_paid():
         teacher = None
     if teacher is None:
         return redirect("/")
-    session.pop("pending_checkout_teacher_id", None)
+    pending_token = cache.sessions.pending_token_from_request(request)
+    try:
+        cache.sessions.clear_pending_checkout(pending_token)
+    except RedisError:
+        app.logger.exception("Redis pending checkout clear failed")
+    g.clear_pending_cookie = True
     email_sent = True
     if not teacher.get("verified"):
         email_sent = _issue_verification(teacher, request.host_url)
@@ -1081,6 +1150,14 @@ def reset_password():
     if problem:
         return jsonify({"error": problem}), 400
     db.set_teacher_password(teacher["teacher_id"], password)
+    try:
+        cache.sessions.destroy_all_sessions(teacher["teacher_id"])
+    except RedisError:
+        app.logger.exception(
+            "Redis revoke-all failed after password reset for teacher %s",
+            teacher["teacher_id"],
+        )
+    g.clear_session_cookie = True
     return jsonify({"ok": True})
 
 
@@ -1101,29 +1178,24 @@ def resend_verification():
 
 @app.route("/api/session/activity", methods=["POST"])
 def api_session_activity():
-    """Remember real activity so an open page does not count as idle."""
-    if not session.get("teacher_id"):
+    """Touch Redis idle TTL so an open page with real activity stays signed in."""
+    if not _current_teacher_id():
         return jsonify({"error": "session_expired"}), 401
-    if _idle_expired():
-        _end_idle_session()
-        return jsonify({"error": "session_expired"}), 401
-    _mark_activity()
     return jsonify({"ok": True})
 
 
 @app.route("/api/session/idle", methods=["POST"])
 def api_session_idle():
-    """End the session after 30 minutes with no activity. Not a logout event."""
-    if session.get("teacher_id"):
+    """End the session after idle timeout. Not a logout event."""
+    if _current_teacher_id():
         _end_idle_session()
     return jsonify({"ok": True})
 
 
 @app.route("/logout")
 def logout():
-    teacher_id = session.get("teacher_id")
-    db.end_login_session(session.get("login_session_id"))
-    session.clear()
+    teacher_id = _current_teacher_id()
+    _clear_auth_session(end_mysql=True)
     events.log_event(events.LOGOUT, teacher_id=teacher_id, success=True, status_code=200)
     # Query flag tells the PostHog snippet to call reset() on the next page.
     return redirect("/login?ph_reset=1")
@@ -1131,12 +1203,12 @@ def logout():
 
 @app.route("/account")
 def account():
-    teacher_id = session.get("teacher_id")
+    teacher_id = _current_teacher_id()
     if not teacher_id:
         return redirect("/login")
     teacher = db.find_teacher_by_id(teacher_id)
     if teacher is None:
-        session.clear()
+        _clear_auth_session()
         return redirect("/login")
     session_id = (request.args.get("session_id") or "").strip()
     if session_id or request.args.get("billing") == "success":
@@ -1149,7 +1221,6 @@ def account():
             app.logger.exception("Billing is not configured")
         except stripe.StripeError:
             app.logger.exception("Could not record the subscription for teacher %s", teacher_id)
-        _teacher_session(teacher)
     return render_template("account.html", active_page="account")
 
 
@@ -1160,7 +1231,7 @@ def api_account():
         return error
     teacher = db.find_teacher_by_id(teacher_id)
     if teacher is None:
-        session.clear()
+        _clear_auth_session()
         return jsonify({"error": "Sign in to continue."}), 401
     try:
         subscription = db.latest_subscription(teacher_id)
@@ -1254,7 +1325,6 @@ def api_update_account():
     teacher = db.update_teacher(
         teacher_id, first_name, last_name, school, district, country, state, city
     )
-    _teacher_session(teacher)
     return jsonify({"ok": True, "teacher": teacher})
 
 
@@ -1484,7 +1554,7 @@ def _class_page(teacher_id, class_id, student=None, is_new=False):
 
 @app.route("/setup")
 def setup():
-    if not session.get("teacher_id"):
+    if not _current_teacher_id():
         return redirect("/login")
     from_account = (request.args.get("next") or "").strip() == "account"
     return render_template(
@@ -2736,18 +2806,18 @@ def _posthog_template_vars():
         "posthog_name": None,
         "posthog_reset": request.args.get("ph_reset") == "1",
     }
-    teacher_id = session.get("teacher_id")
-    if teacher_id:
-        vars_["posthog_distinct_id"] = str(teacher_id)
-        vars_["posthog_email"] = session.get("teacher_email")
-        vars_["posthog_name"] = session.get("teacher_name")
+    data = _load_auth_session()
+    if data:
+        vars_["posthog_distinct_id"] = str(data.get("teacher_id"))
+        vars_["posthog_email"] = data.get("teacher_email") or None
+        vars_["posthog_name"] = data.get("teacher_name") or None
         vars_["posthog_reset"] = False
     return vars_
 
 
 @app.context_processor
 def inject_nav():
-    teacher_id = session.get("teacher_id")
+    teacher_id = _current_teacher_id()
     empty = {
         "nav_recent": [],
         "nav_classes": [],

@@ -22,6 +22,7 @@ def _teacher_mocks(monkeypatch):
     monkeypatch.setattr(app_module.billing, "has_pro_access", lambda teacher_id: True)
     monkeypatch.setattr(app_module.billing, "is_paid_pro", lambda teacher_id: True)
     monkeypatch.setattr(app_module.db, "active_pilot_for_teacher", lambda teacher_id: None)
+    monkeypatch.setattr(app_module.db, "blocking_survey_for_teacher", lambda teacher_id: None)
 
 
 def _skip_without_db():
@@ -210,10 +211,13 @@ def test_generate_persists_initial_version(monkeypatch):
     monkeypatch.setattr(app_module, "_optional_student_id", lambda *args, **kwargs: None)
     monkeypatch.setattr(app_module, "_optional_vocab_list_id", lambda *args, **kwargs: None)
 
+    from tests.conftest_auth import login_as
+
+    monkeypatch.setattr(app_module.db, "create_login_session", lambda *a, **k: None)
+    monkeypatch.setattr(app_module.db, "touch_login_session", lambda *a, **k: None)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
-        with client.session_transaction() as sess:
-            sess["teacher_id"] = 1
+        login_as(client, 1)
         response = client.post("/generate", json={
             "grade": "3",
             "reading_level": "3",
@@ -268,10 +272,13 @@ def test_update_pdf_regen_persists_child_version(monkeypatch):
         lambda teacher_id, pdf_bytes, record, generation_id=None: generation_id,
     )
 
+    from tests.conftest_auth import login_as
+
+    monkeypatch.setattr(app_module.db, "create_login_session", lambda *a, **k: None)
+    monkeypatch.setattr(app_module.db, "touch_login_session", lambda *a, **k: None)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
-        with client.session_transaction() as sess:
-            sess["teacher_id"] = 1
+        login_as(client, 1)
         response = client.post("/update-pdf", json={
             "generation_id": PARENT_GENERATION,
             "title": "Dogs",

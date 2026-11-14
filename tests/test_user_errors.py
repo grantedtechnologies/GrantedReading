@@ -76,6 +76,7 @@ def test_generate_route_hides_azure_json(monkeypatch):
     monkeypatch.setattr(app_module.billing, "has_pro_access", lambda teacher_id: True)
     monkeypatch.setattr(app_module.billing, "is_paid_pro", lambda teacher_id: True)
     monkeypatch.setattr(app_module.db, "active_pilot_for_teacher", lambda teacher_id: None)
+    monkeypatch.setattr(app_module.db, "blocking_survey_for_teacher", lambda teacher_id: None)
 
     def boom(*_args, **_kwargs):
         raise RuntimeError(
@@ -83,10 +84,12 @@ def test_generate_route_hides_azure_json(monkeypatch):
         )
 
     monkeypatch.setattr(app_module.llm_pipeline, "generate_full_worksheet", boom)
+    monkeypatch.setattr(app_module.db, "create_login_session", lambda *a, **k: None)
+    monkeypatch.setattr(app_module.db, "touch_login_session", lambda *a, **k: None)
+    from tests.conftest_auth import login_as
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
-        with client.session_transaction() as sess:
-            sess["teacher_id"] = 1
+        login_as(client, 1)
         response = client.post("/generate", json={
             "grade": "3",
             "reading_level": "3",
@@ -122,10 +125,13 @@ def test_api_classes_lists_teacher_classes(monkeypatch):
     monkeypatch.setattr(app_module.billing, "has_pro_access", lambda teacher_id: True)
     monkeypatch.setattr(app_module.billing, "is_paid_pro", lambda teacher_id: True)
     monkeypatch.setattr(app_module.db, "active_pilot_for_teacher", lambda teacher_id: None)
+    monkeypatch.setattr(app_module.db, "blocking_survey_for_teacher", lambda teacher_id: None)
+    monkeypatch.setattr(app_module.db, "create_login_session", lambda *a, **k: None)
+    monkeypatch.setattr(app_module.db, "touch_login_session", lambda *a, **k: None)
+    from tests.conftest_auth import login_as
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
-        with client.session_transaction() as sess:
-            sess["teacher_id"] = 1
+        login_as(client, 1)
         response = client.get("/api/classes")
         page = client.get("/worksheet")
 

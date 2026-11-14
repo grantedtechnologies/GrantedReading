@@ -14,6 +14,6 @@ COPY . .
 
 EXPOSE 5000
 
-# One worker: the Foundry client is process-local.
-# No worker timeout: writing and image requests run until they finish.
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --timeout 0 app:app"]
+# Multiple workers are safe: login sessions and ephemeral state live in Redis.
+# timeout 0: /generate and RunPod image calls can exceed 30s (cold GPU ~60–90s).
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers ${WEB_CONCURRENCY:-3} --timeout 0 app:app"]

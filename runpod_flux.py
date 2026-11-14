@@ -1,16 +1,12 @@
-"""RunPod Flux image client used by test_app.py.
+"""RunPod Flux image client for worksheet illustrations.
 
 Env:
   RUNPOD_API_KEY                    — Bearer token (preferred)
   runpod-api-key                    — deprecated fallback for the Bearer token
   RUNPOD_ENDPOINT_ID                — defaults to fxql6eq3fp8df1
-  RUNPOD_RESULT_MODE                — webhook | poll (default poll)
-  PUBLIC_BASE_URL                   — public ngrok base URL (webhook mode)
-  ngrok-endpoint                    — local alias for PUBLIC_BASE_URL
-  RUNPOD_WEBHOOK_SECRET             — path token for POST /runpod/webhook/<token>
 
 The endpoint runs the RunPod vLLM-Omni template serving unsloth/FLUX.1-schnell.
-Jobs are submitted via POST /run. Results arrive via webhook and/or GET /status/{id}.
+Jobs are submitted via POST /run; results are polled via GET /status/{id}.
 
 Example:
   from runpod_flux import generate
@@ -28,8 +24,6 @@ import time
 import requests
 from dotenv import load_dotenv
 
-import runpod_results
-
 load_dotenv()
 
 # Prefer RUNPOD_API_KEY; runpod-api-key is a deprecated fallback for older .env files.
@@ -41,18 +35,8 @@ API_KEY = (
 ENDPOINT_ID = (os.getenv("RUNPOD_ENDPOINT_ID") or "fxql6eq3fp8df1").strip()
 BASE_URL = f"https://api.runpod.ai/v2/{ENDPOINT_ID}"
 
-# PUBLIC_BASE_URL preferred; ngrok-endpoint is a local alias used in this repo's .env.
-PUBLIC_BASE_URL = (
-    os.getenv("PUBLIC_BASE_URL")
-    or os.getenv("ngrok-endpoint")
-    or ""
-).strip().rstrip("/")
-WEBHOOK_SECRET = (os.getenv("RUNPOD_WEBHOOK_SECRET") or "").strip()
-RESULT_MODE = (os.getenv("RUNPOD_RESULT_MODE") or "poll").strip().lower()
-
 HTTP_TIMEOUT_S = 60
 RATE_LIMIT_ATTEMPTS = 5
-WEBHOOK_WAIT_S = 30
 # Cold GPU workers can take 60–90s to load FLUX before the job starts.
 DEFAULT_TIMEOUT_S = 600
 TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"})
@@ -133,28 +117,13 @@ def _truncate(value, limit: int = 400) -> str:
     return text if len(text) <= limit else text[:limit]
 
 
-def _resolve_mode(result_mode: str | None) -> str:
-    mode = (result_mode or RESULT_MODE or "poll").strip().lower()
-    if mode not in ("webhook", "poll"):
-        raise ValueError(f"RUNPOD_RESULT_MODE must be 'webhook' or 'poll', got {mode!r}")
-    return mode
-
-
-def _webhook_url() -> str:
-    return f"{PUBLIC_BASE_URL}/runpod/webhook/{WEBHOOK_SECRET}"
-
-
 def _result_from_job_payload(
     data: dict,
     *,
     job_id: str,
     started: float,
-    delivered_via: str,
-    received_at: float | None = None,
 ):
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    notify_at = received_at if received_at is not None else time.perf_counter()
-    notify_ms = int((notify_at - started) * 1000)
     status = (data or {}).get("status")
 
     if status != "COMPLETED":
@@ -163,9 +132,8 @@ def _result_from_job_payload(
             "ok": False,
             "error": f"RunPod status={status}: {_truncate(err_bits)}",
             "elapsed_ms": elapsed_ms,
-            "notify_ms": notify_ms,
             "job_id": job_id,
-            "delivered_via": delivered_via,
+            "delivered_via": "poll",
         }
 
     try:
@@ -175,29 +143,25 @@ def _result_from_job_payload(
             "ok": False,
             "error": f"{exc} Raw: {_truncate(data)}",
             "elapsed_ms": elapsed_ms,
-            "notify_ms": notify_ms,
             "job_id": job_id,
-            "delivered_via": delivered_via,
+            "delivered_via": "poll",
         }
 
     delay_ms = (data or {}).get("delayTime")
     exec_ms = (data or {}).get("executionTime")
-    extra_parts = [f"endpoint {ENDPOINT_ID}", f"via {delivered_via}"]
+    extra_parts = [f"endpoint {ENDPOINT_ID}", "via poll"]
     if delay_ms is not None:
         extra_parts.append(f"delay {delay_ms} ms")
     if exec_ms is not None:
         extra_parts.append(f"exec {exec_ms} ms")
-    if notify_ms is not None:
-        extra_parts.append(f"notify {notify_ms} ms")
 
     return {
         "ok": True,
         "elapsed_ms": elapsed_ms,
-        "notify_ms": notify_ms,
         "delay_ms": delay_ms,
         "exec_ms": exec_ms,
         "job_id": job_id,
-        "delivered_via": delivered_via,
+        "delivered_via": "poll",
         "extra": " · ".join(extra_parts),
         **parsed,
     }
@@ -280,40 +244,18 @@ def generate(
     *,
     num_inference_steps: int = 4,
     guidance_scale: float = 0.0,
-    result_mode: str | None = None,
 ):
     """
-    Submit a RunPod /run job and wait via webhook and/or /status poll.
+    Submit a RunPod /run job and poll /status until terminal.
 
     Success:
-      {"ok": True, "elapsed_ms", "notify_ms", "delay_ms", "exec_ms", "job_id",
+      {"ok": True, "elapsed_ms", "delay_ms", "exec_ms", "job_id",
        "delivered_via", "extra", "b64"|"image_url", "mime"}
     Failure:
       {"ok": False, "error", "elapsed_ms", "job_id", "delivered_via"?}
     """
     if not API_KEY:
         return {"ok": False, "error": "RUNPOD_API_KEY is missing from the environment."}
-
-    try:
-        mode = _resolve_mode(result_mode)
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
-
-    if mode == "webhook":
-        missing = []
-        if not PUBLIC_BASE_URL:
-            missing.append("PUBLIC_BASE_URL (or ngrok-endpoint)")
-        if not WEBHOOK_SECRET:
-            missing.append("RUNPOD_WEBHOOK_SECRET")
-        if missing:
-            return {
-                "ok": False,
-                "error": (
-                    "Webhook mode needs "
-                    + " and ".join(missing)
-                    + ". Set them in .env or switch RUNPOD_RESULT_MODE=poll."
-                ),
-            }
 
     body = {
         "input": {
@@ -325,8 +267,6 @@ def generate(
     }
     if seed is not None:
         body["input"]["seed"] = int(seed)
-    if mode == "webhook":
-        body["webhook"] = _webhook_url()
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -378,55 +318,13 @@ def generate(
 
     data = submit_data or {}
 
-    # Already terminal on submit response (rare).
     if (data or {}).get("status") in TERMINAL_STATUSES:
-        return _result_from_job_payload(
-            data,
-            job_id=job_id,
-            started=started,
-            delivered_via="poll" if mode == "poll" else "webhook",
-        )
-
-    if mode == "webhook":
-        wait_s = min(WEBHOOK_WAIT_S, max(0.0, deadline - time.perf_counter()))
-        entry = runpod_results.STORE.wait(job_id, wait_s)
-        if entry is not None:
-            return _result_from_job_payload(
-                entry["payload"],
-                job_id=job_id,
-                started=started,
-                delivered_via="webhook",
-                received_at=entry["received_at"],
-            )
-        # Safety-net: ngrok hiccup — poll remaining time, do not resubmit.
-        data, err = _poll_until_terminal(job_id, headers, started, deadline, data)
-        if err is not None:
-            err["delivered_via"] = "poll_fallback"
-            err["error"] = (
-                f"Webhook missed for job {job_id}; poll fallback also failed: {err['error']}"
-            )
-            return err
-        return _result_from_job_payload(
-            data,
-            job_id=job_id,
-            started=started,
-            delivered_via="poll_fallback",
-        )
+        return _result_from_job_payload(data, job_id=job_id, started=started)
 
     data, err = _poll_until_terminal(job_id, headers, started, deadline, data)
     if err is not None:
         return err
-    return _result_from_job_payload(
-        data,
-        job_id=job_id,
-        started=started,
-        delivered_via="poll",
-    )
-
-
-# Alias used by test_app.py
-def call_runpod(prompt: str, size: str, seed: int | None, result_mode: str | None = None):
-    return generate(prompt, size=size, seed=seed, result_mode=result_mode)
+    return _result_from_job_payload(data, job_id=job_id, started=started)
 
 
 if __name__ == "__main__":
@@ -436,7 +334,6 @@ if __name__ == "__main__":
     prompt = " ".join(sys.argv[1:]) or "a lighthouse on a granite cliff at sunrise, oil painting"
     print("endpoint:", ENDPOINT_ID)
     print("key set:", bool(API_KEY))
-    print("result_mode:", RESULT_MODE)
     result = generate(prompt, size="1024x1024", seed=42)
     # Don't dump megabytes of base64 to the terminal.
     preview = dict(result)
@@ -446,5 +343,5 @@ if __name__ == "__main__":
     if result.get("ok"):
         print(
             f"delay_ms={result.get('delay_ms')} exec_ms={result.get('exec_ms')} "
-            f"notify_ms={result.get('notify_ms')} via={result.get('delivered_via')}"
+            f"via={result.get('delivered_via')}"
         )

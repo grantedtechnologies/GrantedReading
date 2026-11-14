@@ -110,14 +110,12 @@ def generate_image(image_prompt):
 
     ensure_ai_configured()
 
-    # Production always polls. Webhooks need a public URL + single-process store
-    # (local test_app only). Allow up to 10 minutes for cold GPU workers.
+    # Poll /status until done. Allow up to 10 minutes for cold GPU workers.
     try:
         result = runpod_flux.generate(
             image_prompt,
             size="1024x1024",
             timeout=runpod_flux.DEFAULT_TIMEOUT_S,
-            result_mode="poll",
         )
     except Exception as exc:
         logger.exception("RunPod image request raised")

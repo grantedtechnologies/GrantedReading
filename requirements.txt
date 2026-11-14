@@ -5,6 +5,7 @@ requests==2.34.2
 PyMySQL==1.1.2
 SQLAlchemy==2.0.43
 redis==6.4.0
+fakeredis==2.32.1
 azure-ai-projects==2.4.0
 azure-identity==1.25.3
 azure-storage-blob==12.30.0

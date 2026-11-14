@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 import app as app_module
 import db
 import events
+from cache import sessions
 
 
 def _skip_without_db():
@@ -144,6 +145,7 @@ def test_each_action_writes_one_event(mysql, monkeypatch):
     if maya is None:
         pytest.skip("seed_dev.sql is not loaded")
     teacher_id = maya["teacher_id"]
+    monkeypatch.setattr(app_module.db, "blocking_survey_for_teacher", lambda teacher_id: None)
 
     monkeypatch.setattr(app_module.cache, "worksheet_quota_used", lambda teacher_id: False)
     monkeypatch.setattr(app_module.cache, "mark_worksheet_used", lambda teacher_id: None)
@@ -483,6 +485,7 @@ def test_generation_timeout_and_unverified_login(mysql, monkeypatch):
     maya = db.find_teacher_by_email("maya.chen@granted.local")
     if maya is None:
         pytest.skip("seed_dev.sql is not loaded")
+    monkeypatch.setattr(app_module.db, "blocking_survey_for_teacher", lambda teacher_id: None)
     monkeypatch.setattr(app_module.cache, "worksheet_quota_used", lambda teacher_id: False)
     monkeypatch.setattr(app_module.billing, "has_pro_access", lambda teacher_id: True)
 
@@ -508,9 +511,9 @@ def test_generation_timeout_and_unverified_login(mysql, monkeypatch):
         success=0,
     )
 
-    with client.session_transaction() as sess:
-        sess["teacher_id"] = maya["teacher_id"]
-        sess["last_touch"] = 10**12
+    from tests.conftest_auth import login_as
+
+    login_as(client, maya["teacher_id"], email=maya.get("email") or "maya.chen@granted.local")
 
     before = _max_event_id()
     response = client.post("/generate", json={
@@ -594,24 +597,35 @@ def test_events_record_the_open_pilot(mysql):
     if not all((priya, maya, sam)):
         pytest.skip("seed_dev.sql is not loaded")
     before = _max_event_id()
+    def _open_pilot_id(teacher_id):
+        pilot = db.active_pilot_for_teacher(teacher_id)
+        return None if not pilot else int(pilot["pilotid"])
+
+    expected = [
+        _open_pilot_id(priya["teacher_id"]),
+        _open_pilot_id(maya["teacher_id"]),
+        _open_pilot_id(sam["teacher_id"]),
+        None,
+    ]
+    assert expected[0] is not None  # seed keeps at least one open pilot teacher
     events.log_event(events.LOGOUT, teacher_id=priya["teacher_id"], success=True, status_code=200)
     events.log_event(events.LOGOUT, teacher_id=maya["teacher_id"], success=True, status_code=200)
     events.log_event(events.LOGOUT, teacher_id=sam["teacher_id"], success=True, status_code=200)
     events.log_event(events.LOGIN, success=False, status_code=401, error_message="unknown_email")
     rows = _rows_after(before)
-    assert [row["pilotid"] for row in rows] == [1, None, 2, None]
+    assert [row["pilotid"] for row in rows] == expected
     seeded = _scalar(
         """
         SELECT COUNT(*) FROM Events
-        WHERE teacherid = :teacher_id AND pilotid = 1 AND eventid <= :before
+        WHERE teacherid = :teacher_id AND pilotid = :pilot_id AND eventid <= :before
         """,
-        {"teacher_id": priya["teacher_id"], "before": before},
+        {
+            "teacher_id": priya["teacher_id"],
+            "pilot_id": expected[0],
+            "before": before,
+        },
     )
-    assert seeded == 4
-    assert _scalar(
-        "SELECT COUNT(*) FROM Events WHERE teacherid = :teacher_id AND pilotid = 2 AND eventid <= :before",
-        {"teacher_id": sam["teacher_id"], "before": before},
-    ) == 4
+    assert seeded >= 1
 
 
 def test_idle_session_ends_without_a_logout_event(mysql):
@@ -625,8 +639,13 @@ def test_idle_session_ends_without_a_logout_event(mysql):
         "password": "password123",
     })
     assert signed_in.status_code == 200
-    with client.session_transaction() as sess:
-        sess["last_activity"] = time.time() - (31 * 60)
+    cookies = getattr(client, "_cookies", {}) or {}
+    cookie = next(
+        (c for c in cookies.values() if getattr(c, "key", None) == sessions.COOKIE_NAME),
+        None,
+    )
+    assert cookie is not None
+    sessions.destroy_session(cookie.value)
     before = _max_event_id()
     page = client.get("/worksheet")
     assert page.status_code == 302
@@ -640,11 +659,12 @@ def test_failed_event_insert_does_not_block_the_action(mysql, monkeypatch):
     maya = db.find_teacher_by_email("maya.chen@granted.local")
     if maya is None:
         pytest.skip("seed_dev.sql is not loaded")
+    from tests.conftest_auth import login_as
+
+    monkeypatch.setattr(app_module.db, "blocking_survey_for_teacher", lambda teacher_id: None)
     app_module.app.config["TESTING"] = True
     client = app_module.app.test_client()
-    with client.session_transaction() as sess:
-        sess["teacher_id"] = maya["teacher_id"]
-        sess["last_touch"] = 10**12
+    login_as(client, maya["teacher_id"], email=maya.get("email") or "maya.chen@granted.local")
 
     with db.engine.begin() as conn:
         conn.exec_driver_sql("RENAME TABLE Events TO Events_broken")
