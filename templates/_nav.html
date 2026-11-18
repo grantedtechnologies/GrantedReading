@@ -8,14 +8,14 @@
     <img src="/static/logo.png?v=2" alt="Granted Reading" class="logo-img" />
   </a>
   <div class="topnav-right">
-    {% if session.teacher_name %}
+    {% if teacher_name %}
     <div class="user-name">
-      {{ session.teacher_name }}
+      {{ teacher_name }}
       {% if pilot_badge %}<div class="pilot-badge">{{ pilot_badge }}</div>{% endif %}
     </div>
     <div class="account-menu">
       <button type="button" class="avatar account-menu-btn" id="account-menu-toggle" aria-label="Account menu" aria-expanded="false" aria-haspopup="true" aria-controls="account-menu">
-        {{ session.teacher_name.split()[0][0] }}{{ session.teacher_name.split()[-1][0] }}
+        {{ teacher_name.split()[0][0] }}{{ teacher_name.split()[-1][0] }}
         {% if survey_pending_count %}
         <span class="survey-bubble" aria-label="{{ survey_pending_count }} survey{{ 's' if survey_pending_count != 1 else '' }} waiting">{{ survey_pending_count if survey_pending_count < 10 else '9+' }}</span>
         {% endif %}
@@ -34,7 +34,7 @@
 <div class="nav-backdrop" id="nav-backdrop" hidden></div>
 <aside class="nav-drawer" id="nav-drawer" aria-hidden="true">
   <a href="/worksheet" class="app-nav-link{% if active_page == 'worksheet' %} active{% endif %}">Generator</a>
-  {% if session.teacher_id %}
+  {% if teacher_id %}
   <div class="nav-group">
     <div class="nav-group-head-row">
       <div class="nav-group-head{% if active_page == 'classes' %} active{% endif %}">
@@ -315,7 +315,7 @@
     cursor: pointer;
   }
 </style>
-{% if session.teacher_id %}
+{% if teacher_id %}
 <div class="idle-logout" id="idle-logout" hidden>
   <div class="idle-logout-card" role="dialog" aria-modal="true" aria-labelledby="idle-logout-title">
     <h2 id="idle-logout-title">Do you want to log out?</h2>

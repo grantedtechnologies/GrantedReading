@@ -2817,8 +2817,19 @@ def _posthog_template_vars():
 
 @app.context_processor
 def inject_nav():
-    teacher_id = _current_teacher_id()
+    """Nav + account chrome. Teacher fields come from Redis auth, not Flask session."""
+    data = _load_auth_session()
+    teacher_id = None
+    teacher_name = ""
+    if data:
+        try:
+            teacher_id = int(data.get("teacher_id") or 0) or None
+        except (TypeError, ValueError):
+            teacher_id = None
+        teacher_name = (data.get("teacher_name") or "").strip()
     empty = {
+        "teacher_id": None,
+        "teacher_name": "",
         "nav_recent": [],
         "nav_classes": [],
         "has_pro_access": False,
@@ -2829,6 +2840,13 @@ def inject_nav():
     }
     if not teacher_id:
         return empty
+    if not teacher_name:
+        try:
+            teacher = db.find_teacher_by_id(teacher_id)
+            if teacher:
+                teacher_name = f"{teacher['first_name']} {teacher['last_name']}".strip()
+        except Exception:
+            app.logger.exception("Could not load teacher name for nav %s", teacher_id)
     recent = []
     classes = []
     has_pro = False
@@ -2856,6 +2874,8 @@ def inject_nav():
     except Exception:
         app.logger.exception("Could not load survey badge for teacher %s", teacher_id)
     return {
+        "teacher_id": teacher_id,
+        "teacher_name": teacher_name,
         "nav_recent": recent,
         "nav_classes": classes,
         "has_pro_access": has_pro,
