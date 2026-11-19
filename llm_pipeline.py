@@ -348,6 +348,12 @@ def format_level_vocab_for_prompt(target_grade: int | float | str) -> str:
     )
 
 
+# First 2–12 letter run in a phonics label (skips single letters).
+_PHONICS_CHUNK = re.compile(r"[A-Za-z]{2,12}")
+# Story tokens for phonics matching (keeps simple apostrophe forms).
+_STORY_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+
 def parse_focus_vocabulary(raw) -> list[str]:
     """Teacher-chosen words to repeat in the story and leave untouched.
 

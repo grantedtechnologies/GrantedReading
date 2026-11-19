@@ -567,6 +567,11 @@ def delete_student(teacher_id, student_id):
                 text("DELETE FROM words WHERE vocabListid = :vocab_list_id"),
                 {"vocab_list_id": vocab_list_id},
             )
+            # Worksheets may still point at the list; detach before deleting it.
+            conn.execute(
+                text("UPDATE worksheets SET vocabListid = NULL WHERE vocabListid = :vocab_list_id"),
+                {"vocab_list_id": vocab_list_id},
+            )
         conn.execute(
             text("DELETE FROM vocabList WHERE studentid = :student_id"),
             {"student_id": student_id},
