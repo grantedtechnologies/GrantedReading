@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 LOGIN = "login"
 LOGOUT = "logout"
 CLASS_CREATED = "class_created"
+CLASS_UPDATED = "class_updated"
 STUDENT_CREATED = "student_created"
 VOCAB_LIST_CREATED = "vocab_list_created"
 VOCAB_LIST_UPDATED = "vocab_list_updated"
@@ -23,6 +24,7 @@ EVENT_TYPES = frozenset({
     LOGIN,
     LOGOUT,
     CLASS_CREATED,
+    CLASS_UPDATED,
     STUDENT_CREATED,
     VOCAB_LIST_CREATED,
     VOCAB_LIST_UPDATED,

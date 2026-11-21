@@ -595,6 +595,7 @@ ACCOUNT_ENDPOINTS = {
     "student_profile",
     "new_student",
     "api_create_class",
+    "api_update_class",
     "api_delete_class",
     "setup",
     "api_create_vocab_list",
@@ -1249,6 +1250,8 @@ def api_account():
             "pilot": (
                 {
                     "name": pilot["name"],
+                    "school": pilot.get("school") or "",
+                    "code": pilot.get("code") or "",
                     "ends": pilot["endTime"].date().isoformat(),
                 }
                 if pilot
@@ -1347,10 +1350,18 @@ def api_redeem_pilot():
     db.join_pilot(teacher_id, pilot)
     payload = {
         "ok": True,
-        "pilot": {"name": pilot["name"], "ends": pilot["endTime"].date().isoformat()},
+        "pilot": {
+            "name": pilot["name"],
+            "school": pilot.get("school") or "",
+            "code": pilot.get("code") or "",
+            "ends": pilot["endTime"].date().isoformat(),
+        },
     }
-    # Same as signup: after a code, still send them to Stripe for Pro.
+    # Same as signup: after a code, still send them to Stripe for Pro so they
+    # can enter the matching promotion code for 100% off. Already-paid teachers
+    # skip Checkout (a second subscription is not allowed).
     if billing.is_paid_pro(teacher_id):
+        payload["already_paid"] = True
         return jsonify(payload)
     try:
         payload["checkout_url"] = billing.create_checkout_session(
@@ -1606,6 +1617,53 @@ def api_create_class():
         return jsonify({"error": "Could not create that class."}), 500
     events.log_event(
         events.CLASS_CREATED,
+        teacher_id=teacher_id,
+        entity="class",
+        entity_id=classroom["class_id"],
+        success=True,
+        status_code=200,
+    )
+    return jsonify({"ok": True, "class": classroom})
+
+
+@app.route("/api/classes/<int:class_id>", methods=["PATCH"])
+def api_update_class(class_id):
+    teacher_id, error = _require_teacher_id()
+    if error:
+        return error
+    body = request.get_json() or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        events.log_event(
+            events.CLASS_UPDATED,
+            teacher_id=teacher_id,
+            entity="class",
+            entity_id=class_id,
+            success=False,
+            status_code=400,
+            error_message="invalid_class",
+        )
+        return jsonify({"error": "Enter a class name."}), 400
+    if len(name) > 255:
+        return jsonify({"error": "Keep the class name under 255 characters."}), 400
+    try:
+        classroom = db.update_class_name(teacher_id, class_id, name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        app.logger.exception("Could not rename class %s for teacher %s", class_id, teacher_id)
+        events.log_event(
+            events.CLASS_UPDATED,
+            teacher_id=teacher_id,
+            entity="class",
+            entity_id=class_id,
+            success=False,
+            status_code=500,
+            error_message="database_error",
+        )
+        return jsonify({"error": "Could not rename that class."}), 500
+    events.log_event(
+        events.CLASS_UPDATED,
         teacher_id=teacher_id,
         entity="class",
         entity_id=classroom["class_id"],
@@ -2866,7 +2924,12 @@ def inject_nav():
         paid = billing.is_paid_pro(teacher_id)
         pilot = db.active_pilot_for_teacher(teacher_id)
         if pilot:
-            badge = f"Pilot — {pilot['name']}, ends {pilot['endTime'].date().isoformat()}"
+            school = (pilot.get("school") or "").strip()
+            ends = pilot["endTime"].date().isoformat()
+            if school:
+                badge = f"Pilot: {pilot['name']} · {school} · through {ends}"
+            else:
+                badge = f"Pilot: {pilot['name']} · through {ends}"
     except Exception:
         app.logger.exception("Could not load access for teacher %s", teacher_id)
     try:

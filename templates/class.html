@@ -101,6 +101,47 @@
     letter-spacing: -0.03em;
     margin-bottom: 22px;
   }
+  .class-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .class-title-row .col-title { margin-bottom: 0; flex: 1; min-width: 0; }
+  .class-title-edit {
+    width: 100%;
+    max-width: 420px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-family: var(--font);
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+    background: var(--white);
+  }
+  .class-title-edit:focus { outline: none; border-color: var(--green); }
+  .rename-class-btn {
+    border: none;
+    background: var(--green-light);
+    color: var(--green-dark);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 800;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    flex: none;
+  }
+  .rename-class-btn:hover { background: #d8f0d6; }
+  .class-rename-status {
+    font-size: 13px;
+    min-height: 18px;
+    margin-bottom: 12px;
+  }
+  .class-rename-status.error { color: #b42318; }
+  .class-rename-status.ok { color: var(--green-dark); }
 
   .student-list { display: flex; flex-direction: column; gap: 12px; padding: 2px; }
 
@@ -350,7 +391,11 @@
 <main class="page">
   <div class="class-layout{% if show_form %} has-profile{% endif %}">
     <section class="roster-col">
-      <h1 class="col-title">{{ classroom.name }}</h1>
+      <div class="class-title-row" id="class-title-row">
+        <h1 class="col-title" id="class-title">{{ classroom.name }}</h1>
+        <button type="button" class="rename-class-btn" id="rename-class-btn">Rename</button>
+      </div>
+      <div class="class-rename-status" id="class-rename-status"></div>
       <p class="hint">{% if classroom.class_type == 'special-education' %}Special education{% elif classroom.class_type == 'excelerated/AP' %}Accelerated/AP{% else %}Standard{% endif %}</p>
       <div class="student-list">
         {% for student in students %}
@@ -509,6 +554,7 @@
   const classId = {{ classroom.class_id }};
   const isNew = {{ 'true' if is_new else 'false' }};
   const studentId = {{ selected_student.student_id if selected_student else 'null' }};
+  let className = {{ classroom.name|tojson }};
 
   function setStatus(message, ok) {
     const el = document.getElementById("student-status");
@@ -516,6 +562,90 @@
     el.textContent = message || "";
     el.className = "status " + (ok ? "ok" : "error");
   }
+
+  function setClassRenameStatus(message, ok) {
+    const el = document.getElementById("class-rename-status");
+    if (!el) return;
+    el.textContent = message || "";
+    el.className = "class-rename-status " + (ok ? "ok" : "error");
+  }
+
+  (function setupClassRename() {
+    const row = document.getElementById("class-title-row");
+    const title = document.getElementById("class-title");
+    const button = document.getElementById("rename-class-btn");
+    if (!row || !title || !button) return;
+
+    function showTitle() {
+      title.hidden = false;
+      title.textContent = className;
+      button.hidden = false;
+      button.textContent = "Rename";
+      const input = document.getElementById("class-title-input");
+      if (input) input.remove();
+    }
+
+    async function saveName(input) {
+      const next = (input.value || "").trim();
+      if (!next) {
+        setClassRenameStatus("Enter a class name.", false);
+        input.focus();
+        return;
+      }
+      if (next === className) {
+        setClassRenameStatus("");
+        showTitle();
+        return;
+      }
+      button.disabled = true;
+      input.disabled = true;
+      const response = await send(`/api/classes/${classId}`, { name: next }, "PATCH");
+      button.disabled = false;
+      if (!response.ok) {
+        input.disabled = false;
+        setClassRenameStatus(response.error, false);
+        input.focus();
+        return;
+      }
+      className = (response.data.class && response.data.class.name) || next;
+      document.title = "Granted Reading — " + className;
+      setClassRenameStatus("Class renamed.", true);
+      showTitle();
+    }
+
+    button.addEventListener("click", () => {
+      setClassRenameStatus("");
+      title.hidden = true;
+      button.hidden = true;
+      const input = document.createElement("input");
+      input.id = "class-title-input";
+      input.className = "class-title-edit";
+      input.value = className;
+      input.maxLength = 255;
+      input.setAttribute("aria-label", "Class name");
+      row.insertBefore(input, button);
+      input.focus();
+      input.select();
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          saveName(input);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          setClassRenameStatus("");
+          showTitle();
+        }
+      });
+      input.addEventListener("blur", () => {
+        if (document.activeElement === input) return;
+        // Give click handlers a tick; cancel restores on Escape already.
+        setTimeout(() => {
+          if (!document.getElementById("class-title-input")) return;
+          saveName(input);
+        }, 120);
+      });
+    });
+  })();
 
   async function send(url, body, method) {
     try {

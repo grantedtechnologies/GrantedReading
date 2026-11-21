@@ -216,6 +216,54 @@ def create_class(teacher_id, name, subject, grade_level, school_year, class_type
         }
 
 
+def update_class_name(teacher_id, class_id, name):
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise ValueError("Enter a class name.")
+    if len(cleaned) > 255:
+        raise ValueError("Keep the class name under 255 characters.")
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                UPDATE class
+                SET name = :name
+                WHERE classid = :class_id AND teacherid = :teacher_id
+                """
+            ),
+            {
+                "name": cleaned,
+                "class_id": int(class_id),
+                "teacher_id": int(teacher_id),
+            },
+        )
+        if result.rowcount == 0:
+            raise ValueError("That class is not on your account.")
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                  c.classid AS class_id,
+                  c.teacherid AS teacher_id,
+                  c.subject,
+                  c.name,
+                  c.type AS class_type,
+                  c.gradeLevel AS grade_level,
+                  c.schoolYear AS school_year,
+                  (
+                    SELECT COUNT(*) FROM Students s WHERE s.classid = c.classid
+                  ) AS student_count
+                FROM class c
+                WHERE c.classid = :class_id AND c.teacherid = :teacher_id
+                """
+            ),
+            {"class_id": int(class_id), "teacher_id": int(teacher_id)},
+        ).mappings().first()
+    item = dict(row)
+    item["student_count"] = int(item["student_count"])
+    return item
+
+
 def delete_class(teacher_id, class_id):
     with engine.begin() as conn:
         owned = conn.execute(

@@ -52,7 +52,21 @@
   .class-link { color: inherit; text-decoration: none; flex: 1; min-width: 0; }
   .class-link:hover .class-name { color: var(--green-dark); }
   .class-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
-  .text-btn { background: none; border: none; color: #b42318; font-family: var(--font); font-weight: 800; font-size: 13px; cursor: pointer; }
+  .class-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+  .text-btn { background: none; border: none; font-family: var(--font); font-weight: 800; font-size: 13px; cursor: pointer; }
+  .text-btn.rename { color: var(--green-dark); }
+  .text-btn.remove { color: #b42318; }
+  .class-name-edit {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: var(--font);
+    font-size: 15px;
+    font-weight: 800;
+    background: var(--white);
+  }
+  .class-name-edit:focus { outline: none; border-color: var(--green); }
   .empty { font-size: 14px; color: var(--muted); }
   .actions { display: flex; justify-content: flex-end; }
   @media (max-width: 700px) {
@@ -172,12 +186,15 @@
       return;
     }
     box.innerHTML = classes.map((item) => `
-      <div class="class-row">
+      <div class="class-row" data-class-id="${item.class_id}">
         <a class="class-link" href="/classes/${item.class_id}">
           <div class="class-name">${escapeHtml(item.name)}</div>
           <div class="class-meta">${escapeHtml(item.subject)} · ${escapeHtml(classTypeLabels[item.class_type] || item.class_type)} · ${escapeHtml(gradeLabel(item.grade_level))} · ${escapeHtml(item.school_year)}</div>
         </a>
-        <button class="text-btn remove-class" type="button" data-class-id="${item.class_id}">Remove</button>
+        <div class="class-actions">
+          <button class="text-btn rename rename-class" type="button" data-class-id="${item.class_id}">Rename</button>
+          <button class="text-btn remove remove-class" type="button" data-class-id="${item.class_id}">Remove</button>
+        </div>
       </div>
     `).join("");
     box.querySelectorAll(".remove-class").forEach((button) => {
@@ -192,6 +209,66 @@
         await loadAccount();
       });
     });
+    box.querySelectorAll(".rename-class").forEach((button) => {
+      button.addEventListener("click", () => startRename(button.closest(".class-row")));
+    });
+  }
+
+  function startRename(row) {
+    if (!row || row.querySelector(".class-name-edit")) return;
+    const classId = row.dataset.classId;
+    const link = row.querySelector(".class-link");
+    const nameEl = row.querySelector(".class-name");
+    const actions = row.querySelector(".class-actions");
+    const current = nameEl ? nameEl.textContent : "";
+    if (link) link.hidden = true;
+    if (actions) actions.hidden = true;
+    const input = document.createElement("input");
+    input.className = "class-name-edit";
+    input.value = current;
+    input.maxLength = 255;
+    input.setAttribute("aria-label", "Class name");
+    row.insertBefore(input, actions);
+    input.focus();
+    input.select();
+
+    async function finish(save) {
+      if (!row.contains(input)) return;
+      const next = (input.value || "").trim();
+      if (!save || !next || next === current) {
+        input.remove();
+        if (link) link.hidden = false;
+        if (actions) actions.hidden = false;
+        if (save && !next) setStatus("class-status", "Enter a class name.", false);
+        return;
+      }
+      input.disabled = true;
+      const response = await fetch(`/api/classes/${classId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        input.disabled = false;
+        setStatus("class-status", data.error || "Could not rename that class.", false);
+        input.focus();
+        return;
+      }
+      setStatus("class-status", "Class renamed.", true);
+      await loadAccount();
+    }
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", () => setTimeout(() => finish(true), 120));
   }
 
   async function loadAccount() {

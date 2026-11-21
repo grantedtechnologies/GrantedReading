@@ -255,6 +255,36 @@
   .plan-name { font-family: var(--font); font-weight: 800; font-size: 14px; }
   .plan-price { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
+  .pilot-callout {
+    margin: 14px 0 4px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1.5px solid #b7e2b4;
+    background: var(--green-light);
+  }
+  .pilot-callout-label {
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--green-dark);
+    margin-bottom: 4px;
+  }
+  .pilot-callout-title {
+    font-family: var(--font);
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink);
+    line-height: 1.35;
+  }
+  .pilot-callout-meta {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.45;
+  }
+
   .submit {
     border: none;
     border-radius: 8px;
@@ -394,8 +424,10 @@
         <div class="plan-price" id="plan-pro-price">$5.99 · unlimited worksheets</div>
       </button>
     </div>
-    <div id="pilot-panel" hidden>
-      <p class="hint" id="pilot-hint"></p>
+    <div id="pilot-panel" class="pilot-callout" hidden>
+      <div class="pilot-callout-label">Your pilot</div>
+      <div class="pilot-callout-title" id="pilot-title"></div>
+      <p class="pilot-callout-meta" id="pilot-hint"></p>
     </div>
     <div class="field" id="pilot-redeem">
       <label for="pilot-code">Pilot code</label>
@@ -403,7 +435,7 @@
         <input id="pilot-code" type="text" autocomplete="off" placeholder="School pilot code" />
         <button class="submit" type="button" id="pilot-redeem-btn">Redeem &amp; pay</button>
       </div>
-      <p class="hint">Redeeming a code adds pilot access, then continues to Stripe for Pro.</p>
+      <p class="hint" id="pilot-redeem-hint">Redeems pilot access, then opens Stripe Checkout so you can enter that same code for 100% off Pro.</p>
     </div>
     <div class="status" id="billing-status"></div>
   </section>
@@ -612,27 +644,49 @@
     if (!billing) return;
     const price = (billing.price_cents / 100).toFixed(2);
     document.getElementById("plan-pro-price").textContent = `$${price} · unlimited worksheets`;
-    // Paid Stripe Pro is the selected Pro card. Pilot-only still lets you click Pro to pay.
-    document.getElementById("plan-standard").classList.toggle("selected", !billing.is_paid_pro);
-    document.getElementById("plan-pro").classList.toggle("selected", !!billing.is_paid_pro);
+    // Pro card when they have Pro access (paid or pilot). Paid still owns the portal path.
+    const onPro = !!billing.is_pro;
+    document.getElementById("plan-standard").classList.toggle("selected", !onPro);
+    document.getElementById("plan-pro").classList.toggle("selected", onPro);
     const pilotPanel = document.getElementById("pilot-panel");
+    const pilotTitle = document.getElementById("pilot-title");
     const pilotHint = document.getElementById("pilot-hint");
+    const redeemHint = document.getElementById("pilot-redeem-hint");
     if (billing.pilot) {
+      const p = billing.pilot;
       pilotPanel.hidden = false;
-      pilotHint.textContent = `Pilot access until ${billing.pilot.ends} (${billing.pilot.name}).`;
+      pilotTitle.textContent = p.name || "School pilot";
+      const parts = [];
+      if (p.school) parts.push(p.school);
+      if (p.code) parts.push(`code ${p.code}`);
+      parts.push(`through ${p.ends}`);
+      pilotHint.textContent =
+        `You are on this pilot${parts.length ? ` — ${parts.join(" · ")}` : "."}. ` +
+        "Full Pro features are included for the pilot window.";
     } else {
       pilotPanel.hidden = true;
+      pilotTitle.textContent = "";
       pilotHint.textContent = "";
     }
-    if (billing.is_paid_pro) {
+    if (billing.pilot && billing.is_paid_pro) {
       document.getElementById("billing-hint").textContent =
-        `You are on paid ${billing.plan_name}. Choose Standard anytime to manage or cancel on Stripe.`;
+        `You are on the ${billing.pilot.name} pilot through ${billing.pilot.ends}, and you also have a paid ${billing.plan_name} subscription. Choose Standard to manage billing on Stripe.`;
     } else if (billing.pilot) {
       document.getElementById("billing-hint").textContent =
-        `You have pilot access. Choose ${billing.plan_name} anytime to subscribe for $${price} a ${billing.interval}.`;
+        `You are on the ${billing.pilot.name} pilot through ${billing.pilot.ends}. That gives you Pro for free during the pilot. Choose ${billing.plan_name} to keep Pro after it ends ($${price}/${billing.interval}) — you can enter your pilot code for 100% off on Stripe.`;
+    } else if (billing.is_paid_pro) {
+      document.getElementById("billing-hint").textContent =
+        `You are on paid ${billing.plan_name}. Choose Standard anytime to manage or cancel on Stripe.`;
     } else {
       document.getElementById("billing-hint").textContent =
         `Choose ${billing.plan_name} to subscribe for $${price} a ${billing.interval}, or Standard stays free.`;
+    }
+    if (billing.is_paid_pro) {
+      redeemHint.textContent =
+        "Redeems pilot access. You already have paid Pro, so there is no Checkout step.";
+    } else {
+      redeemHint.textContent =
+        "Redeems pilot access, then opens Stripe Checkout so you can enter that same code for 100% off Pro.";
     }
   }
 
@@ -647,11 +701,20 @@
       return;
     }
     btn.disabled = false;
-    setStatus(
-      "billing-status",
-      response.ok ? "Pilot access added." : response.error,
-      response.ok,
-    );
+    let message = response.error;
+    if (response.ok) {
+      const name = response.data && response.data.pilot && response.data.pilot.name;
+      if (response.data && response.data.already_paid) {
+        message = name
+          ? `You're on the ${name} pilot. You already have paid Pro, so Stripe Checkout was skipped.`
+          : "Pilot access added. You already have paid Pro, so Stripe Checkout was skipped.";
+      } else {
+        message = name
+          ? `You're on the ${name} pilot, but Stripe Checkout did not start. Try again or choose Pro above.`
+          : "Pilot access added, but Stripe Checkout did not start. Try again or choose Pro above.";
+      }
+    }
+    setStatus("billing-status", message, response.ok);
     if (response.ok) await loadAccount();
   });
 

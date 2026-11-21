@@ -104,6 +104,11 @@ def is_teacher_pro(teacher_id):
 
 
 def create_checkout_session(teacher, base_url, success_url=None, cancel_url=None):
+    """Start Stripe Checkout for Pro.
+
+    allow_promotion_codes lets the teacher type a pilot discount code on the
+    Stripe page (same string as the Granted pilot code).
+    """
     base = base_url.rstrip("/")
     teacher_ref = str(teacher["teacher_id"])
     params = {
@@ -116,6 +121,8 @@ def create_checkout_session(teacher, base_url, success_url=None, cancel_url=None
         "subscription_data": {"metadata": {"teacherid": teacher_ref}},
         "success_url": success_url or f"{base}/account?billing=success&session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": cancel_url or f"{base}/account?billing=canceled",
+        # Pilot codes are Stripe promotion codes; teachers enter them here.
+        "allow_promotion_codes": True,
     }
     previous = db.latest_subscription(teacher["teacher_id"])
     if previous and previous.get("stripe_customer_id"):
