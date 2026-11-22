@@ -10,17 +10,12 @@ INSERT INTO `Teachers` (fname, lname, email, password, verified, createdAt, coun
   ('Priya', 'Nair', 'priya.nair@granted.local', 'password123', 1, '2026-08-15 09:00:00', 'United States', 'California', 'Riverside', 'Riverside Elementary', 'Riverside Unified'),
   ('Sam', 'Ortiz', 'sam.ortiz@granted.local', 'password123', 1, '2026-01-20 09:00:00', 'United States', 'California', 'Riverside', 'Grant Middle', 'Metro District');
 
--- Both seed pilots are limited to Riverside Unified. District rows load before this file.
-INSERT INTO `Pilot` (name, school, code, startTime, endTime, createdAt, districtid)
-SELECT 'Riverside USD 2026', 'Riverside Unified', 'RIVERSIDE2026', '2026-08-01 00:00:00', '2027-06-30 23:59:59', '2026-08-01 09:00:00', districtid
-FROM districts
-WHERE name = 'Riverside Unified' AND state = 'California'
-LIMIT 1;
-INSERT INTO `Pilot` (name, school, code, startTime, endTime, createdAt, districtid)
-SELECT 'Spring pilot 2026', 'Grant Middle', 'SPRING2026', '2026-01-15 00:00:00', '2026-10-20 23:59:59', '2026-01-10 09:00:00', districtid
-FROM districts
-WHERE name = 'Riverside Unified' AND state = 'California'
-LIMIT 1;
+-- Seed pilots are limited by state (California), not district.
+INSERT INTO `Pilot` (country, state, stateCode, name, code, startTime, endTime, createdAt) VALUES
+  ('United States', 'California', 'CA', 'Riverside USD 2026', 'RIVERSIDE2026',
+   '2026-08-01 00:00:00', '2027-06-30 23:59:59', '2026-08-01 09:00:00'),
+  ('United States', 'California', 'CA', 'Spring pilot 2026', 'SPRING2026',
+   '2026-01-15 00:00:00', '2026-10-20 23:59:59', '2026-01-10 09:00:00');
 
 INSERT INTO `class` (teacherid, subject, name, `type`, gradeLevel, schoolYear, createdAt, updatedAt) VALUES
   (1, 'English', '1st Period ELA', 'standard', 4, '2026-2027', '2026-09-28 15:00:00', '2026-09-28 15:00:00'),

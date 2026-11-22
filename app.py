@@ -26,6 +26,7 @@ import cache
 import db
 import events
 import file
+import places
 from reading_level import ReadingLevelError
 
 load_dotenv()
@@ -838,18 +839,38 @@ def login():
 
 
 def _place_fields(body):
-    country = (body.get("country") or "").strip()
-    state = (body.get("state") or "").strip()
+    country = (body.get("country") or "").strip() or places.COUNTRY
+    raw_state = (body.get("state") or "").strip()
     city = (body.get("city") or "").strip()
     school = (body.get("school") or "").strip()
-    district = (body.get("district") or "").strip()
-    if not school or not district:
-        raise ValueError("Enter your school and district.")
-    if not country or not state or not city:
-        raise ValueError("Enter your country, state, and city.")
-    if any(len(value) > 255 for value in (country, state, city, school, district)):
-        raise ValueError("Keep the country, state, city, school, and district under 255 characters.")
+    district = (body.get("district") or "").strip() or None
+    if not school:
+        raise ValueError("Enter your school.")
+    state_name, _state_code = places.normalize_state(raw_state)
+    if not state_name or not city:
+        raise ValueError("Choose your state and city.")
+    if country.lower() not in ("united states", "us", "usa"):
+        raise ValueError("Choose United States for now.")
+    country = places.COUNTRY
+    state = state_name
+    for value in (country, state, city, school, district or ""):
+        if len(value) > 255:
+            raise ValueError("Keep the country, state, city, school, and district under 255 characters.")
     return country, state, city, school, district
+
+
+@app.route("/api/places/states", methods=["GET"])
+def api_place_states():
+    return jsonify({"country": places.COUNTRY, "states": places.list_states()})
+
+
+@app.route("/api/places/cities", methods=["GET"])
+def api_place_cities():
+    return jsonify({
+        "country": places.COUNTRY,
+        "state": request.args.get("state") or "",
+        "cities": places.list_cities(request.args.get("state")),
+    })
 
 
 @app.route("/api/districts", methods=["GET"])
@@ -905,7 +926,7 @@ def signup():
         return jsonify({"error": "Choose Standard, Pro, or Pilot."}), 400
     pilot, pilot_error = (None, None)
     if plan == "pilot":
-        pilot, pilot_error = _pilot_for_place(body.get("pilot_code"), district, state)
+        pilot, pilot_error = _pilot_for_place(body.get("pilot_code"), state)
         if pilot_error:
             return jsonify({"error": pilot_error, "field": "pilot_code"}), 400
         if pilot is None:
@@ -1250,7 +1271,6 @@ def api_account():
             "pilot": (
                 {
                     "name": pilot["name"],
-                    "school": pilot.get("school") or "",
                     "code": pilot.get("code") or "",
                     "ends": pilot["endTime"].date().isoformat(),
                 }
@@ -1340,9 +1360,7 @@ def api_redeem_pilot():
     teacher = db.find_teacher_by_id(teacher_id)
     if teacher is None:
         return jsonify({"error": "Sign in again."}), 401
-    pilot, pilot_error = _pilot_for_place(
-        body.get("pilot_code"), teacher.get("district"), teacher.get("state")
-    )
+    pilot, pilot_error = _pilot_for_place(body.get("pilot_code"), teacher.get("state"))
     if pilot_error:
         return jsonify({"error": pilot_error}), 400
     if pilot is None:
@@ -1352,7 +1370,6 @@ def api_redeem_pilot():
         "ok": True,
         "pilot": {
             "name": pilot["name"],
-            "school": pilot.get("school") or "",
             "code": pilot.get("code") or "",
             "ends": pilot["endTime"].date().isoformat(),
         },
@@ -1464,27 +1481,21 @@ def _pilot_from_code(raw):
     return pilot, None
 
 
-def _district_matches_pilot(district, state, pilot):
-    given = (district or "").strip().lower()
-    district_name = (pilot.get("district_name") or "").strip().lower()
-    if not given or given != district_name:
-        return False
-    given_state = (state or "").strip().lower()
-    allowed = {
-        (pilot.get("district_state") or "").strip().lower(),
-        (pilot.get("district_state_code") or "").strip().lower(),
-    }
-    allowed.discard("")
-    return bool(given_state) and given_state in allowed
+def _state_matches_pilot(state, pilot):
+    return places.state_matches(
+        state,
+        pilot.get("state") or pilot.get("district_state"),
+        pilot.get("state_code") or pilot.get("district_state_code"),
+    )
 
 
-def _pilot_for_place(raw, district, state):
-    """A live code is usable only by a teacher in that pilot's district."""
+def _pilot_for_place(raw, state):
+    """A live code is usable only by a teacher in that pilot's state."""
     pilot, error = _pilot_from_code(raw)
     if error or pilot is None:
         return pilot, error
-    if not _district_matches_pilot(district, state, pilot):
-        name = pilot.get("district_name") or "another district"
+    if not _state_matches_pilot(state, pilot):
+        name = pilot.get("state") or "another state"
         return None, f"That pilot is only for {name}."
     return pilot, None
 
@@ -2924,12 +2935,8 @@ def inject_nav():
         paid = billing.is_paid_pro(teacher_id)
         pilot = db.active_pilot_for_teacher(teacher_id)
         if pilot:
-            school = (pilot.get("school") or "").strip()
             ends = pilot["endTime"].date().isoformat()
-            if school:
-                badge = f"Pilot: {pilot['name']} · {school} · through {ends}"
-            else:
-                badge = f"Pilot: {pilot['name']} · through {ends}"
+            badge = f"Pilot: {pilot['name']} · through {ends}"
     except Exception:
         app.logger.exception("Could not load access for teacher %s", teacher_id)
     try:

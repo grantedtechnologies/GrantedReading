@@ -383,20 +383,24 @@
         </div>
         <div class="field">
           <label for="country">Country</label>
-          <input id="country" name="country" autocomplete="country-name" />
+          <input id="country" name="country" value="United States" disabled />
         </div>
         <div class="field">
           <label for="state">State</label>
-          <input id="state" name="state" autocomplete="address-level1" />
+          <select id="state" name="state" autocomplete="address-level1">
+            <option value="">Select a state</option>
+          </select>
         </div>
         <div class="field">
           <label for="city">City</label>
-          <input id="city" name="city" autocomplete="address-level2" />
+          <select id="city" name="city" autocomplete="address-level2">
+            <option value="">Select a city</option>
+          </select>
         </div>
       </div>
       <div id="place-manual">
         <div class="field">
-          <label for="district">District</label>
+          <label for="district">District <span class="optional">(optional)</span></label>
           <input id="district" name="district" autocomplete="off" />
           <select id="district-list" class="district-list hidden" size="6"></select>
           <p class="place-note" id="place-note"></p>
@@ -441,9 +445,9 @@
   </section>
 </main>
 
-<script src="/static/place.js?v=3"></script>
+<script src="/static/place.js?v=5"></script>
 <script>
-  const placeFields = setupPlaceFields({ hideUntilChoice: false });
+  let placeFieldsReady = Promise.resolve();
   function setStatus(id, message, ok) {
     const el = document.getElementById(id);
     el.textContent = message || "";
@@ -609,12 +613,16 @@
     document.getElementById("first-name").value = teacher.first_name || "";
     document.getElementById("last-name").value = teacher.last_name || "";
     document.getElementById("school").value = teacher.school || "";
-    document.getElementById("country").value = teacher.country || "";
-    document.getElementById("state").value = teacher.state || "";
-    document.getElementById("city").value = teacher.city || "";
-    document.getElementById("district").value = teacher.district || "";
-    placeFields.refresh();
+    document.getElementById("country").value = "United States";
     document.getElementById("email").value = teacher.email || "";
+    placeFieldsReady = setupPlaceFields({
+      initial: {
+        state: teacher.state || "",
+        city: teacher.city || "",
+        district: teacher.district || "",
+      },
+    });
+    await placeFieldsReady;
     const nameEl = document.querySelector(".user-name");
     if (nameEl && teacher.first_name) {
       nameEl.textContent = `${teacher.first_name} ${teacher.last_name}`;
@@ -657,7 +665,6 @@
       pilotPanel.hidden = false;
       pilotTitle.textContent = p.name || "School pilot";
       const parts = [];
-      if (p.school) parts.push(p.school);
       if (p.code) parts.push(`code ${p.code}`);
       parts.push(`through ${p.ends}`);
       pilotHint.textContent =
@@ -760,7 +767,7 @@
       first_name: document.getElementById("first-name").value,
       last_name: document.getElementById("last-name").value,
       school: document.getElementById("school").value,
-      country: document.getElementById("country").value,
+      country: "United States",
       state: document.getElementById("state").value,
       city: document.getElementById("city").value,
       district: document.getElementById("district").value,

@@ -26,17 +26,42 @@ def _signup_body(**overrides):
     return body
 
 
-def test_signup_requires_country_state_and_city(monkeypatch):
+def test_signup_requires_state_and_city(monkeypatch):
     created = []
     monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
     monkeypatch.setattr(app_module.db, "create_teacher", lambda *args: created.append(args))
     body = _signup_body()
-    body["country"] = ""
+    body["state"] = ""
     with _client(monkeypatch) as client:
         response = client.post("/signup", json=body)
     assert response.status_code == 400
-    assert "country" in response.get_json()["error"].lower()
+    assert "state" in response.get_json()["error"].lower()
     assert created == []
+
+
+def test_signup_allows_blank_district(monkeypatch):
+    created = []
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+
+    def _create(*args):
+        created.append(args)
+        return {
+            "teacher_id": 9,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@x.test",
+            "verified": 0,
+        }
+
+    monkeypatch.setattr(app_module.db, "create_teacher", _create)
+    monkeypatch.setattr(app_module, "_issue_verification", lambda *args: True)
+    body = _signup_body()
+    body["district"] = ""
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=body)
+    assert response.status_code == 200
+    assert created
+    assert created[0][5] is None
 
 
 def test_signup_reports_when_the_confirmation_email_does_not_send(monkeypatch):
@@ -142,8 +167,8 @@ def test_live_pilot_still_sends_to_stripe_checkout(monkeypatch):
             "name": "Riverside",
             "startTime": now - timedelta(days=1),
             "endTime": now + timedelta(days=30),
-            "district_name": "Metro District",
-            "district_state": "Pennsylvania",
+            "state": "Pennsylvania",
+            "state_code": "PA",
         },
     )
     monkeypatch.setattr(
@@ -172,7 +197,7 @@ def test_live_pilot_still_sends_to_stripe_checkout(monkeypatch):
     assert created and created[0][-1]["pilotid"] == 1
 
 
-def test_pilot_code_rejects_a_teacher_outside_the_district(monkeypatch):
+def test_pilot_code_rejects_a_teacher_outside_the_state(monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     created = []
@@ -186,16 +211,15 @@ def test_pilot_code_rejects_a_teacher_outside_the_district(monkeypatch):
             "name": "Riverside",
             "startTime": now - timedelta(days=1),
             "endTime": now + timedelta(days=30),
-            "district_name": "Riverside Unified",
-            "district_state": "California",
-            "district_state_code": "CA",
+            "state": "California",
+            "state_code": "CA",
         },
     )
     monkeypatch.setattr(app_module.db, "create_teacher_with_pilot", lambda *args: created.append(args))
     with _client(monkeypatch) as client:
         response = client.post("/signup", json=_signup_body(membership="pilot", pilot_code="RIVERSIDE2026"))
     assert response.status_code == 400
-    assert "Riverside Unified" in response.get_json()["error"]
+    assert "California" in response.get_json()["error"]
     assert created == []
 
 

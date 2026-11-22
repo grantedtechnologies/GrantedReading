@@ -35,7 +35,7 @@ CREATE TABLE `Teachers`(
     `country` VARCHAR(255) NOT NULL,
     `state` VARCHAR(255) NOT NULL,
     `city` VARCHAR(255) NOT NULL,
-    `district` VARCHAR(255) NOT NULL,
+    `district` VARCHAR(255) NULL,
     `school` VARCHAR(255) NOT NULL
 );
 ALTER TABLE
@@ -54,9 +54,10 @@ CREATE INDEX `districts_place_index` ON `districts` (`country`, `state`, `city`)
 CREATE INDEX `districts_state_code_index` ON `districts` (`stateCode`, `city`);
 CREATE TABLE `Pilot`(
     `pilotid` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    `districtid` BIGINT UNSIGNED NOT NULL,
-    `name` VARCHAR(255) NOT NULL, 
-    `school` VARCHAR(255) NOT NULL,
+    `country` VARCHAR(80) NOT NULL,
+    `state` VARCHAR(80) NOT NULL,
+    `stateCode` CHAR(2) NULL,
+    `name` VARCHAR(255) NOT NULL,
     `code` VARCHAR(255) NOT NULL,
     `startTime` DATETIME NOT NULL,
     `endTime` DATETIME NOT NULL,
@@ -65,8 +66,7 @@ CREATE TABLE `Pilot`(
 );
 ALTER TABLE
     `Pilot` ADD UNIQUE `pilot_code_unique`(`code`);
-ALTER TABLE
-    `Pilot` ADD CONSTRAINT `pilot_districtid_foreign` FOREIGN KEY(`districtid`) REFERENCES `districts`(`districtid`);
+CREATE INDEX `pilot_state_index` ON `Pilot` (`country`, `state`);
 CREATE TABLE `class`(
     `classid` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `teacherid` BIGINT UNSIGNED NOT NULL,

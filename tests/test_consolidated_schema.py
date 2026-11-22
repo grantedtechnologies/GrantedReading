@@ -74,7 +74,7 @@ def test_checks_reject_bad_rows(mysql):
     cases = [
         "INSERT INTO versions (generationid, sheetid, source, title, content, trueLevel, rating) VALUES ('e5555555555555555555555555555555', LAST_INSERT_ID(), 'initial', 'x', '{}', 2, 0)",
         "INSERT INTO versions (generationid, sheetid, source, title, content, trueLevel, rating) VALUES ('e6666666666666666666666666666666', LAST_INSERT_ID(), 'initial', 'x', '{}', 2, 6)",
-        "INSERT INTO Pilot (name, school, code, startTime, endTime) VALUES ('bad', 'x', 'BADWINDOW', '2026-06-01', '2026-01-01')",
+        "INSERT INTO Pilot (country, state, name, code, startTime, endTime) VALUES ('United States', 'California', 'bad', 'BADWINDOW', '2026-06-01', '2026-01-01')",
         "INSERT INTO subscriptions (teacherid, pilotid, stripeCustomerId, stripeSubscriptionId, price, status) VALUES (1, 1, 'cus_x', 'sub_x', 0, 'active')",
         "INSERT INTO subscriptions (teacherid, stripeCustomerId, stripeSubscriptionId, price, status) VALUES (1, NULL, NULL, 5.99, 'active')",
         "INSERT INTO worksheets (teacherid, title, sheettype, original, informational, interest, expectedLevel, DOKLevel, DOKRequest) VALUES (1, 'x', 'worksheet', 1, 0, '', 2, 'custom', NULL)",
@@ -95,8 +95,8 @@ def test_pilot_lookup_is_case_insensitive(mysql):
     if found is None:
         pytest.skip("seed_dev.sql is not loaded")
     assert found["code"] == "RIVERSIDE2026"
-    assert found["district_name"] == "Riverside Unified"
-    assert found["district_state"] == "California"
+    assert found["state"] == "California"
+    assert found["state_code"] == "CA"
 
 
 def test_has_pro_access_does_not_use_latest_row(monkeypatch):
@@ -120,14 +120,6 @@ def test_active_pilot_prefers_most_recently_joined(mysql):
     pilot_ids = []
     try:
         with db.engine.begin() as conn:
-            district_id = conn.execute(
-                text(
-                    "SELECT districtid FROM districts "
-                    "WHERE name = 'Riverside Unified' AND state = 'California' LIMIT 1"
-                )
-            ).scalar()
-            if district_id is None:
-                pytest.skip("Riverside Unified district is missing")
             for name, code, end_days in (
                 ("Longer window pilot", code_a, 400),
                 ("Shorter window pilot", code_b, 30),
@@ -136,16 +128,16 @@ def test_active_pilot_prefers_most_recently_joined(mysql):
                     text(
                         """
                         INSERT INTO Pilot
-                          (districtid, name, school, code, startTime, endTime, createdAt)
+                          (country, state, stateCode, name, code,
+                           startTime, endTime, createdAt)
                         VALUES
-                          (:district_id, :name, 'Test School', :code,
+                          ('United States', 'California', 'CA', :name, :code,
                            UTC_TIMESTAMP() - INTERVAL 1 DAY,
                            UTC_TIMESTAMP() + INTERVAL :end_days DAY,
                            UTC_TIMESTAMP())
                         """
                     ),
                     {
-                        "district_id": int(district_id),
                         "name": name,
                         "code": code,
                         "end_days": end_days,

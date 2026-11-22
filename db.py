@@ -425,14 +425,23 @@ def _district_rows(result):
 
 
 def search_districts(country, state, city, query=""):
+    """District suggestions for a US state; city narrows the list when set."""
     country = (country or "").strip()
     state = (state or "").strip()
     city = (city or "").strip()
     query = (query or "").replace("%", "").replace("_", "").strip()
-    if not country or not state or not city:
+    if not country or not state:
         return []
     # These columns use a case-insensitive collation, so equality keeps the index.
     state_sql = "stateCode = :state" if len(state) == 2 else "state = :state"
+    city_sql = ""
+    if city:
+        city_sql = """
+                  AND (
+                    city = :city
+                    OR (CHAR_LENGTH(:city) >= 3 AND city LIKE CONCAT(:city, '%'))
+                  )
+        """
     with engine.connect() as conn:
         result = conn.execute(
             text(
@@ -441,12 +450,11 @@ def search_districts(country, state, city, query=""):
                 FROM districts
                 WHERE country = :country
                   AND {state_sql}
-                  AND (
-                    city = :city
-                    OR (CHAR_LENGTH(:city) >= 3 AND city LIKE CONCAT(:city, '%'))
-                  )
+                  {city_sql}
                   AND (:query = '' OR name LIKE CONCAT('%', :query, '%'))
-                ORDER BY CASE WHEN city = :city THEN 0 ELSE 1 END, name
+                ORDER BY
+                  CASE WHEN :city != '' AND city = :city THEN 0 ELSE 1 END,
+                  name
                 LIMIT 40
                 """
             ),
@@ -1193,7 +1201,7 @@ def active_pilot_for_teacher(teacher_id):
         row = conn.execute(
             text(
                 """
-                SELECT p.pilotid, p.name, p.school, p.code, p.startTime, p.endTime
+                SELECT p.pilotid, p.name, p.code, p.startTime, p.endTime
                 FROM subscriptions s
                 JOIN Pilot p ON p.pilotid = s.pilotid
                 WHERE s.teacherid = :teacher_id
@@ -1216,11 +1224,9 @@ def find_pilot_by_code(code):
         row = conn.execute(
             text(
                 """
-                SELECT p.pilotid, p.name, p.school, p.code, p.startTime, p.endTime,
-                       p.districtid AS district_id, d.name AS district_name,
-                       d.state AS district_state, d.stateCode AS district_state_code
+                SELECT p.pilotid, p.name, p.code, p.startTime, p.endTime,
+                       p.country, p.state, p.stateCode AS state_code
                 FROM Pilot p
-                JOIN districts d ON d.districtid = p.districtid
                 WHERE p.code = :code
                 LIMIT 1
                 """

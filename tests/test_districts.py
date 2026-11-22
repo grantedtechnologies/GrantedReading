@@ -21,6 +21,13 @@ def test_city_search_finds_the_local_district():
     assert "Philadelphia City SD" in names
 
 
+def test_state_search_loads_district_options_without_a_city():
+    _skip_without_directory()
+    rows = db.search_districts("United States", "Pennsylvania", "", "Philadelphia")
+    names = [row["name"] for row in rows]
+    assert "Philadelphia City SD" in names
+
+
 def test_nearby_search_uses_coordinates_only_for_the_list():
     _skip_without_directory()
     rows = db.nearby_districts(39.9526, -75.1652)

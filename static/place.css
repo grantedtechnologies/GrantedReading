@@ -56,3 +56,10 @@
   margin-top: 6px;
   min-height: 16px;
 }
+
+label .optional {
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
