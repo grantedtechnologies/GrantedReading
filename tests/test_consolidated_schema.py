@@ -104,3 +104,110 @@ def test_has_pro_access_does_not_use_latest_row(monkeypatch):
     monkeypatch.setattr(db, "active_pilot_exists", lambda teacher_id: True)
     assert billing.has_pro_access(9) is True
     assert billing.is_paid_pro(9) is False
+
+
+def test_active_pilot_prefers_most_recently_joined(mysql):
+    """Display the newest redeem, not the pilot with the latest endTime."""
+    from sqlalchemy import text
+
+    priya = db.find_teacher_by_email("priya.nair@granted.local")
+    if priya is None:
+        pytest.skip("seed_dev.sql is not loaded")
+    teacher_id = int(priya["teacher_id"])
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    code_a = f"NEWER{stamp}A"[:32]
+    code_b = f"NEWER{stamp}B"[:32]
+    pilot_ids = []
+    try:
+        with db.engine.begin() as conn:
+            district_id = conn.execute(
+                text(
+                    "SELECT districtid FROM districts "
+                    "WHERE name = 'Riverside Unified' AND state = 'California' LIMIT 1"
+                )
+            ).scalar()
+            if district_id is None:
+                pytest.skip("Riverside Unified district is missing")
+            for name, code, end_days in (
+                ("Longer window pilot", code_a, 400),
+                ("Shorter window pilot", code_b, 30),
+            ):
+                result = conn.execute(
+                    text(
+                        """
+                        INSERT INTO Pilot
+                          (districtid, name, school, code, startTime, endTime, createdAt)
+                        VALUES
+                          (:district_id, :name, 'Test School', :code,
+                           UTC_TIMESTAMP() - INTERVAL 1 DAY,
+                           UTC_TIMESTAMP() + INTERVAL :end_days DAY,
+                           UTC_TIMESTAMP())
+                        """
+                    ),
+                    {
+                        "district_id": int(district_id),
+                        "name": name,
+                        "code": code,
+                        "end_days": end_days,
+                    },
+                )
+                pilot_ids.append(int(result.lastrowid))
+
+        older = {"pilotid": pilot_ids[0], "name": "Longer window pilot"}
+        newer = {"pilotid": pilot_ids[1], "name": "Shorter window pilot"}
+        db.join_pilot(teacher_id, older)
+        db.join_pilot(teacher_id, newer)
+        # Pin stamps after Priya's seed Riverside row (2026-09-01) so endTime
+        # cannot decide: longer-window is the older join of these two.
+        with db.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE subscriptions SET createdAt = '2026-11-10 00:00:00' "
+                    "WHERE teacherid = :t AND pilotid = :p"
+                ),
+                {"t": teacher_id, "p": pilot_ids[0]},
+            )
+            conn.execute(
+                text(
+                    "UPDATE subscriptions SET createdAt = '2026-11-20 00:00:00' "
+                    "WHERE teacherid = :t AND pilotid = :p"
+                ),
+                {"t": teacher_id, "p": pilot_ids[1]},
+            )
+        current = db.active_pilot_for_teacher(teacher_id)
+        assert current is not None
+        assert int(current["pilotid"]) == pilot_ids[1]
+
+        # Re-redeem bumps createdAt and becomes the displayed pilot.
+        with db.engine.connect() as conn:
+            before = conn.execute(
+                text(
+                    "SELECT createdAt FROM subscriptions "
+                    "WHERE teacherid = :t AND pilotid = :p"
+                ),
+                {"t": teacher_id, "p": pilot_ids[0]},
+            ).scalar()
+        db.join_pilot(teacher_id, older)
+        with db.engine.connect() as conn:
+            after = conn.execute(
+                text(
+                    "SELECT createdAt FROM subscriptions "
+                    "WHERE teacherid = :t AND pilotid = :p"
+                ),
+                {"t": teacher_id, "p": pilot_ids[0]},
+            ).scalar()
+        assert after > before
+        current = db.active_pilot_for_teacher(teacher_id)
+        assert current is not None
+        assert int(current["pilotid"]) == pilot_ids[0]
+    finally:
+        with db.engine.begin() as conn:
+            for pilot_id in pilot_ids:
+                conn.execute(
+                    text("DELETE FROM subscriptions WHERE teacherid = :t AND pilotid = :p"),
+                    {"t": teacher_id, "p": pilot_id},
+                )
+                conn.execute(
+                    text("DELETE FROM Pilot WHERE pilotid = :p"),
+                    {"p": pilot_id},
+                )

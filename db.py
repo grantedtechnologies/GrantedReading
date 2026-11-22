@@ -1188,6 +1188,7 @@ def active_pilot_exists(teacher_id):
 
 
 def active_pilot_for_teacher(teacher_id):
+    """The open pilot this teacher most recently joined (or re-redeemed)."""
     with engine.connect() as conn:
         row = conn.execute(
             text(
@@ -1198,7 +1199,7 @@ def active_pilot_for_teacher(teacher_id):
                 WHERE s.teacherid = :teacher_id
                   AND s.pilotid IS NOT NULL
                   AND UTC_TIMESTAMP() BETWEEN p.startTime AND p.endTime
-                ORDER BY p.endTime DESC, p.pilotid DESC
+                ORDER BY s.createdAt DESC, s.subid DESC
                 LIMIT 1
                 """
             ),
@@ -1230,7 +1231,7 @@ def find_pilot_by_code(code):
 
 
 def join_pilot(teacher_id, pilot):
-    """Attach a teacher to a pilot. Rejoining the same pilot is a no-op."""
+    """Attach a teacher to a pilot. Re-redeem bumps createdAt so it becomes current."""
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -1242,7 +1243,9 @@ def join_pilot(teacher_id, pilot):
                   (:teacher_id, :pilot_id, NULL, NULL, NULL,
                    0, 'active', NULL, UTC_TIMESTAMP(), NULL) AS new
                 ON DUPLICATE KEY UPDATE
-                  status = 'active'
+                  status = 'active',
+                  createdAt = UTC_TIMESTAMP(),
+                  canceledAt = NULL
                 """
             ),
             {"teacher_id": int(teacher_id), "pilot_id": int(pilot["pilotid"])},
