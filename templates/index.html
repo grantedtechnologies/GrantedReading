@@ -372,7 +372,71 @@
   }
 
   .mode-btn.selected { background: var(--green); border-color: var(--green); color: #fff; }
-  .mode-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .mode-btn:disabled,
+  .mode-btn.is-unavailable { opacity: 0.45; cursor: pointer; }
+  .vocab-list-tip {
+    position: relative;
+    flex: 1;
+    display: flex;
+  }
+  .vocab-list-tip .mode-btn { width: 100%; }
+  /* Invisible bridge so the cursor can move from Vocab → bubble without closing. */
+  .vocab-list-tip.is-empty::after {
+    content: "";
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 14px;
+    z-index: 39;
+  }
+  .vocab-list-tip.is-empty:hover::after,
+  .vocab-list-tip.is-empty:focus-within::after { display: block; }
+  .vocab-list-tip.is-empty:hover .mode-btn.is-unavailable,
+  .vocab-list-tip.is-empty:focus-within .mode-btn.is-unavailable {
+    opacity: 1;
+    border-color: var(--green);
+    color: var(--green-dark);
+    background: var(--green-light);
+  }
+  .vocab-empty-bubble {
+    left: 0;
+    right: auto;
+    top: 100%;
+    padding: 10px 0 0;
+    min-width: 220px;
+    max-width: min(320px, 70vw);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+  .vocab-empty-bubble::before {
+    top: 4px;
+  }
+  .vocab-empty-card {
+    display: block;
+    background: var(--white);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.12);
+    padding: 10px 12px;
+  }
+  .vocab-empty-bubble a {
+    display: inline;
+    margin-left: 4px;
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--green-dark);
+    text-decoration: underline;
+  }
+  .vocab-empty-bubble a:hover { color: var(--green); }
+  .vocab-list-tip.is-empty:hover .vocab-empty-bubble,
+  .vocab-list-tip.is-empty:focus-within .vocab-empty-bubble { display: block; }
+  .vocab-mode:has(.vocab-list-tip.is-empty:hover),
+  .vocab-mode:has(.vocab-list-tip.is-empty:focus-within) { z-index: 41; position: relative; }
 
   .combo { position: relative; }
   .combo-input-wrap { position: relative; }
@@ -1054,21 +1118,21 @@
               <span class="info-tip-bubble" id="student-hint" role="tooltip">Sign in to load your classes, or fill the form by hand.</span>
             </span>
           </div>
-          <select id="class-select">
+          <select id="class-select" data-testid="class-select">
             <option value="">Choose a class…</option>
           </select>
         </div>
 
         <div class="field">
           <label class="field-label" for="student-select">Student</label>
-          <select id="student-select" disabled>
+          <select id="student-select" disabled data-testid="student-select">
             <option value="">Choose a class first…</option>
           </select>
         </div>
 
         <div class="field">
           <label class="field-label" for="student-grade">Student's grade</label>
-          <select id="student-grade">
+          <select id="student-grade" data-testid="student-grade">
             <option value="" disabled selected>Select a grade…</option>
             <option value="K">Kindergarten</option>
             <option value="1">1st grade</option>
@@ -1112,7 +1176,7 @@
 
         <div class="field">
           <label class="field-label">Topic/Student's interest</label>
-          <textarea id="interests" placeholder="e.g. loves dinosaurs, soccer, and cooking with her grandmother…"></textarea>
+          <textarea id="interests" placeholder="e.g. loves dinosaurs, soccer, and cooking with her grandmother…" data-testid="interests"></textarea>
         </div>
 
         <div class="field">
@@ -1167,7 +1231,15 @@
           </div>
           <div class="mode-toggle vocab-mode" id="vocab-mode">
             <button type="button" class="mode-btn selected" data-vocab-mode="type">Type words</button>
-            <button type="button" class="mode-btn" data-vocab-mode="list" id="vocab-list-tab" disabled>Vocab</button>
+            <span class="vocab-list-tip" id="vocab-list-tip">
+              <button type="button" class="mode-btn is-unavailable" data-vocab-mode="list" id="vocab-list-tab" aria-disabled="true" aria-describedby="vocab-empty-bubble">Vocab</button>
+              <span class="info-tip-bubble vocab-empty-bubble" id="vocab-empty-bubble" role="tooltip">
+                <span class="vocab-empty-card">
+                  <span id="vocab-empty-message">This student doesn’t have a vocab list yet.</span>
+                  <a id="vocab-empty-link" href="/classes">go here</a>
+                </span>
+              </span>
+            </span>
           </div>
           <input id="focus-vocabulary" type="text" placeholder="e.g. resilient" autocomplete="off" />
           <select id="vocab-list-select" class="hidden">
@@ -1194,7 +1266,7 @@
 
         <hr class="divider" />
 
-        <div id="error-box"></div>
+        <div id="error-box" data-testid="generate-error"></div>
 
         <div id="status-area">
           <div class="progress-steps">
@@ -1205,7 +1277,7 @@
           </div>
         </div>
 
-        <button class="generate-btn" id="generate-btn" onclick="generateWorksheet()">
+        <button class="generate-btn" id="generate-btn" data-testid="generate-btn" onclick="generateWorksheet()">
           Generate
         </button>
 
@@ -1230,7 +1302,7 @@
 
       <div id="pdf-section">
         <div class="pdf-frame-wrap">
-          <iframe id="pdf-frame" title="Worksheet preview"></iframe>
+          <iframe id="pdf-frame" title="Worksheet preview" data-testid="worksheet-preview"></iframe>
         </div>
         <div class="mobile-pdf-ready" id="mobile-pdf-ready" hidden>
           <div class="mobile-pdf-icon" aria-hidden="true">
@@ -1246,7 +1318,7 @@
           <button type="button" class="btn-view" id="view-pdf-btn" onclick="openPdfFullscreen()">View PDF</button>
         </div>
         <div class="pdf-actions">
-          <a id="download-btn" class="btn-view" download="worksheet.pdf" aria-label="Download">
+          <a id="download-btn" class="btn-view" download="worksheet.pdf" aria-label="Download" data-testid="download-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span id="download-label">
               <span class="dl-full">Download</span>
@@ -1269,22 +1341,22 @@
 
       <div class="review-ready" id="review-ready">
         <p>Your worksheet is ready. Happy with the PDF? Download or print from the preview. Need changes?</p>
-        <button class="btn-edit-worksheet" type="button" onclick="openEditPanel()">Edit worksheet</button>
+        <button class="btn-edit-worksheet" type="button" data-testid="edit-worksheet-btn" onclick="openEditPanel()">Edit worksheet</button>
       </div>
 
-      <div class="review-form" id="review-form">
+      <div class="review-form" id="review-form" data-testid="review-form">
         <div class="review-intro" id="review-intro">
           Edit the fields below, then update the PDF or regenerate the illustration.
         </div>
         <div class="review-field">
           <label for="review-title">Title</label>
-          <input id="review-title" type="text" />
+          <input id="review-title" type="text" data-testid="review-title" />
         </div>
         <div class="review-field">
           <label for="review-story">Story</label>
-          <textarea id="review-story"></textarea>
+          <textarea id="review-story" data-testid="review-story"></textarea>
         </div>
-        <div id="review-questions"></div>
+        <div id="review-questions" data-testid="review-questions"></div>
 
         <div class="mobile-image-ready" id="mobile-image-ready" hidden>
           <div class="mobile-pdf-icon" aria-hidden="true">
@@ -1307,12 +1379,12 @@
               <span class="info-tip-bubble" id="image-hint" role="tooltip">Use this when you want a new illustration. Leave blank to keep the current image when updating text only.</span>
             </span>
           </div>
-          <textarea id="image-feedback" placeholder="e.g. Make the character younger, add a soccer ball, use brighter colors…"></textarea>
+          <textarea id="image-feedback" placeholder="e.g. Make the character younger, add a soccer ball, use brighter colors…" data-testid="image-feedback"></textarea>
         </div>
 
         <div class="review-actions">
-          <button class="btn-secondary" id="update-pdf-btn" onclick="updatePdf(false)">Update PDF</button>
-          <button class="btn-create-pdf" id="regenerate-image-btn" onclick="updatePdf(true)">Regenerate Illustration</button>
+          <button class="btn-secondary" id="update-pdf-btn" data-testid="update-pdf-btn" onclick="updatePdf(false)">Update PDF</button>
+          <button class="btn-create-pdf" id="regenerate-image-btn" data-testid="regenerate-image-btn" onclick="updatePdf(true)">Regenerate Illustration</button>
         </div>
       </div>
     </div>
@@ -1992,6 +2064,27 @@
     document.getElementById("reading-level").value = setPicker("reading-level-grid", level);
   }
 
+  function updateVocabEmptyTip() {
+    const tip = document.getElementById("vocab-list-tip");
+    const message = document.getElementById("vocab-empty-message");
+    const link = document.getElementById("vocab-empty-link");
+    const tab = document.getElementById("vocab-list-tab");
+    const showTip = tip && tab && tab.classList.contains("is-unavailable");
+    if (tip) tip.classList.toggle("is-empty", !!showTip);
+    if (!message || !link) return;
+    link.classList.remove("hidden");
+    link.textContent = "go here";
+    if (!selectedStudent) {
+      message.textContent = "Choose a student first to use one of their saved vocab lists.";
+      const classId = document.getElementById("class-select")?.value;
+      link.href = classId ? `/classes/${classId}/students/new` : "/classes";
+      return;
+    }
+    const name = `${selectedStudent.first_name || ""} ${selectedStudent.last_name || ""}`.trim() || "This student";
+    message.textContent = `${name} doesn’t have a vocab list yet.`;
+    link.href = `/classes/${selectedStudent.class_id}/students/${selectedStudent.student_id}#vocab`;
+  }
+
   function setVocabMode(mode) {
     vocabMode = mode;
     const typing = mode === "type";
@@ -2014,8 +2107,11 @@
         : list.list_name;
       select.appendChild(option);
     });
-    tab.disabled = !lists || !lists.length;
-    if (!lists || !lists.length) setVocabMode("type");
+    const hasLists = !!(lists && lists.length);
+    tab.classList.toggle("is-unavailable", !hasLists);
+    tab.setAttribute("aria-disabled", hasLists ? "false" : "true");
+    updateVocabEmptyTip();
+    if (!hasLists) setVocabMode("type");
   }
 
   function applyStudent(student) {
@@ -2039,11 +2135,15 @@
   });
 
   document.querySelectorAll("#vocab-mode .mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.disabled) return;
+    btn.addEventListener("click", (event) => {
+      if (btn.dataset.vocabMode === "list" && btn.classList.contains("is-unavailable")) {
+        event.preventDefault();
+        return;
+      }
       setVocabMode(btn.dataset.vocabMode);
     });
   });
+  updateVocabEmptyTip();
 
   document.querySelectorAll(".info-tip").forEach((tip) => {
     const btn = tip.querySelector(".info-tip-btn");

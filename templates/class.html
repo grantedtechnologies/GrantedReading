@@ -440,7 +440,7 @@
         {% endif %}
       </div>
       <div class="roster-foot">
-        <a class="add-student" href="/classes/{{ classroom.class_id }}/students/new" aria-label="Add a student">+</a>
+        <a class="add-student" href="/classes/{{ classroom.class_id }}/students/new" aria-label="Add a student" data-testid="add-student">+</a>
       </div>
     </section>
 
@@ -450,21 +450,21 @@
         {% if is_new %}New student{% else %}{{ selected_name }}{% endif %}
       </h2>
       <div class="profile-card">
-      <form id="student-profile-form">
+      <form id="student-profile-form" data-testid="student-profile-form">
         <div class="row">
           <div class="field">
             <label for="student-first">First name</label>
-            <input id="student-first" name="first_name" value="{{ selected_student.first_name if selected_student else '' }}" placeholder="Allie" autocomplete="given-name" />
+            <input id="student-first" name="first_name" value="{{ selected_student.first_name if selected_student else '' }}" placeholder="Allie" autocomplete="given-name" data-testid="student-first-name" />
           </div>
           <div class="field">
             <label for="student-last">Last name</label>
-            <input id="student-last" name="last_name" value="{{ '' if not selected_student or selected_student.last_name == selected_student.first_name else selected_student.last_name }}" placeholder="Baker" autocomplete="family-name" />
+            <input id="student-last" name="last_name" value="{{ '' if not selected_student or selected_student.last_name == selected_student.first_name else selected_student.last_name }}" placeholder="Baker" autocomplete="family-name" data-testid="student-last-name" />
           </div>
         </div>
         <div class="row">
           <div class="field">
             <label for="student-level">Reading Level</label>
-            <select id="student-level" name="reading_level">
+            <select id="student-level" name="reading_level" data-testid="student-reading-level">
               {% for value, label in grade_options %}
               <option value="{{ value }}"{% if (selected_student.reading_level if selected_student else default_grade)|int == value %} selected{% endif %}>{{ label }}</option>
               {% endfor %}
@@ -472,7 +472,7 @@
           </div>
           <div class="field">
             <label for="student-grade">Grade</label>
-            <select id="student-grade" name="classroom_grade">
+            <select id="student-grade" name="classroom_grade" data-testid="student-classroom-grade">
               {% for value, label in grade_options %}
               <option value="{{ value }}"{% if (selected_student.classroom_grade if selected_student else default_grade)|int == value %} selected{% endif %}>{{ label }}</option>
               {% endfor %}
@@ -481,13 +481,13 @@
         </div>
         <div class="field">
           <label for="student-notes">Notes/Interests</label>
-          <textarea id="student-notes" name="notes" placeholder="Your text here">{{ selected_student.notes if selected_student else '' }}</textarea>
+          <textarea id="student-notes" name="notes" placeholder="Your text here" data-testid="student-notes">{{ selected_student.notes if selected_student else '' }}</textarea>
         </div>
-        <button class="save-btn" type="submit">Save</button>
-        <div class="status" id="student-status"></div>
+        <button class="save-btn" type="submit" data-testid="student-save">Save</button>
+        <div class="status" id="student-status" data-testid="student-status"></div>
       </form>
-        <div class="vocab-wrap">
-          <button type="button" class="vocab-toggle" id="vocab-toggle" aria-expanded="false" aria-controls="vocab-menu">
+        <div class="vocab-wrap" id="vocab">
+          <button type="button" class="vocab-toggle" id="vocab-toggle" aria-expanded="false" aria-controls="vocab-menu" data-testid="vocab-toggle">
             <span>Vocab</span>
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -521,25 +521,25 @@
             {% else %}
             <p class="empty">No vocab list yet</p>
             {% endif %}
-            <button type="button" class="add-vocab" id="add-vocab-btn" aria-label="Add a vocab list" aria-expanded="false" aria-controls="add-list-form">+</button>
-            <div id="add-list-form" hidden>
+            <button type="button" class="add-vocab" id="add-vocab-btn" aria-label="Add a vocab list" aria-expanded="false" aria-controls="add-list-form" data-testid="add-vocab-btn">+</button>
+            <div id="add-list-form" hidden data-testid="add-list-form">
               <div class="field">
                 <label for="list-name">Name</label>
-                <input id="list-name" name="list_name" placeholder="Soccer words" />
+                <input id="list-name" name="list_name" placeholder="Soccer words" data-testid="vocab-list-name" />
               </div>
               <div class="field">
                 <label for="list-description">Description (optional)</label>
-                <input id="list-description" name="description" placeholder="Keep these in stories" />
+                <input id="list-description" name="description" placeholder="Keep these in stories" data-testid="vocab-list-description" />
               </div>
               <div class="field">
                 <label for="list-words">Words</label>
-                <textarea id="list-words" name="words" placeholder="goal, pass, teammate"></textarea>
+                <textarea id="list-words" name="words" placeholder="goal, pass, teammate" data-testid="vocab-list-words"></textarea>
               </div>
               {% if is_new %}
               <p class="hint">Saved when you save the student.</p>
               {% else %}
-              <button class="submit" type="button" id="add-list-btn">Save</button>
-              <div class="status" id="list-status"></div>
+              <button class="submit" type="button" id="add-list-btn" data-testid="vocab-list-save">Save</button>
+              <div class="status" id="list-status" data-testid="vocab-list-status"></div>
               {% endif %}
             </div>
           </div>
@@ -857,6 +857,16 @@
       }
       window.location.href = `/classes/${classId}/students/${studentId}`;
     });
+  }
+
+  // Generator "add a vocab list" deep-link lands here with #vocab.
+  if (window.location.hash === "#vocab" && vocabToggle && vocabMenu) {
+    setVocabOpen(true);
+    const vocabSection = document.getElementById("vocab");
+    if (vocabSection) vocabSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (addVocabBtn && addListForm && !document.getElementById("vocab-lists")) {
+      openVocabForm(null);
+    }
   }
 </script>
 </body>

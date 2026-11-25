@@ -358,10 +358,10 @@
           <p class="lead" id="library-lead">Every worksheet you have downloaded, newest first.</p>
         </div>
         <div class="layout-toggle" role="group" aria-label="Worksheet layout">
-          <button class="layout-btn" type="button" data-layout="column" aria-label="Column" title="Column">
+          <button class="layout-btn" type="button" data-layout="column" aria-label="Column" title="Column" data-testid="history-layout-column">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 3h14M1 8h14M1 13h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           </button>
-          <button class="layout-btn selected" type="button" data-layout="grid" aria-label="Grid" title="Grid">
+          <button class="layout-btn selected" type="button" data-layout="grid" aria-label="Grid" title="Grid" data-testid="history-layout-grid">
             <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
           </button>
         </div>
@@ -398,7 +398,7 @@
 
   <p class="card empty" id="filter-empty" hidden>No worksheets match that search.</p>
 
-  <div class="sheets layout-grid" id="sheets">
+  <div class="sheets layout-grid" id="sheets" data-testid="worksheet-history">
   {% for sheet in worksheets %}
   <article
     class="card sheet"
@@ -407,6 +407,7 @@
     data-class-id="{{ sheet.class_id }}"
     data-title="{{ sheet.worksheet_title or sheet.title }}"
     data-pdf-url="/worksheets/{{ sheet.sheetid }}/view?version={{ sheet.versionid }}"
+    data-testid="history-sheet-{{ sheet.sheetid }}"
   >
     <div class="grid-only">
       <div class="pdf-frame">
@@ -454,10 +455,10 @@
       <div><div class="fact-label">Phonics</div><div class="fact-value">{{ sheet.phonics or "—" }}</div></div>
     </div>
 
-    <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}" data-generation-id="{{ sheet.generation_id }}">
+    <form class="feedback-form" data-sheet-id="{{ sheet.sheetid }}" data-generation-id="{{ sheet.generation_id }}" data-testid="feedback-form-{{ sheet.sheetid }}">
       <div>
         <label for="rating-{{ sheet.versionid }}">Rating</label>
-        <select id="rating-{{ sheet.versionid }}" name="rating">
+        <select id="rating-{{ sheet.versionid }}" name="rating" data-testid="feedback-rating-{{ sheet.sheetid }}">
           <option value="">No rating</option>
           {% for value in range(rating_min, rating_max + 1) %}
           <option value="{{ value }}" {% if sheet.rating == value %}selected{% endif %}>{{ value }}</option>
@@ -466,10 +467,10 @@
       </div>
       <div>
         <label for="feedback-{{ sheet.versionid }}">Feedback</label>
-        <textarea id="feedback-{{ sheet.versionid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?">{{ sheet.feedback }}</textarea>
+        <textarea id="feedback-{{ sheet.versionid }}" name="feedback" maxlength="{{ feedback_max }}" placeholder="How did this worksheet go with the student?" data-testid="feedback-text-{{ sheet.sheetid }}">{{ sheet.feedback }}</textarea>
       </div>
-      <button class="save-btn" type="submit">Save</button>
-      <p class="form-status" role="status"></p>
+      <button class="save-btn" type="submit" data-testid="feedback-save-{{ sheet.sheetid }}">Save</button>
+      <p class="form-status" role="status" data-testid="feedback-status-{{ sheet.sheetid }}"></p>
     </form>
     </div>
   </article>

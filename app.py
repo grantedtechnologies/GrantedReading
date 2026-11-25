@@ -29,7 +29,28 @@ import file
 import places
 from reading_level import ReadingLevelError
 
-load_dotenv()
+# E2E sets GRANTED_ENV_FILE=.env.test so the child process does not pick up
+# conflicting values from a local .env (e.g. RUNPOD_WEBHOOK_SECRET / Redis).
+# Re-apply after imports: llm.py / blobStorage.py call load_dotenv(override=True).
+_granted_env = (os.getenv("GRANTED_ENV_FILE") or "").strip()
+if _granted_env:
+    load_dotenv(_granted_env, override=True)
+else:
+    load_dotenv()
+
+from ai_fixtures import assert_mock_ai_safe_to_start, verify_runpod_signature
+
+if _granted_env:
+    load_dotenv(_granted_env, override=True)
+    # Drop cached Redis client so it reconnects with the E2E URL.
+    try:
+        from stateless.redis_client import reset_client
+
+        reset_client()
+    except Exception:
+        pass
+
+assert_mock_ai_safe_to_start()
 llm.require_foundry_config()
 
 CONFIRM_SALT = "email-confirm"
@@ -65,29 +86,66 @@ def _mail_sender():
     return ("Granted Reading", "noreply@grantedreading.test")
 
 
-def _send_mailtrap(subject, text, to_email, category="email_verification"):
+def _send_mailtrap(subject, text, to_email, category="email_verification", html=None):
     """Send via Mailtrap's HTTPS API. Raises on network or API failure."""
     token = app.config.get("MAIL_PASSWORD") or ""
     if not token:
         raise RuntimeError("MAIL_PASSWORD is not set.")
     name, email = _mail_sender()
+    payload = {
+        "from": {"email": email, "name": name},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "text": text,
+        "category": category,
+    }
+    if html:
+        payload["html"] = html
     response = requests.post(
         MAILTRAP_SEND_URL,
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            # Mailtrap edge protection can reject clients with no User-Agent.
+            "User-Agent": "GrantedReading/1.0 (Mailtrap)",
         },
-        json={
-            "from": {"email": email, "name": name},
-            "to": [{"email": to_email}],
-            "subject": subject,
-            "text": text,
-            "category": category,
-        },
+        json=payload,
         timeout=MAIL_SEND_TIMEOUT,
     )
     response.raise_for_status()
     return response
+
+
+def _send_smtp(subject, text, to_email, category="email_verification", html=None):
+    """Send through SMTP (Mailpit in tests). Raises on failure."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    del category  # Mailpit does not need Mailtrap categories.
+    host = app.config.get("SMTP_HOST") or "localhost"
+    port = int(app.config.get("SMTP_PORT") or 1025)
+    name, email = _mail_sender()
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"] = f"{name} <{email}>"
+    message["To"] = to_email
+    message.attach(MIMEText(text or "", "plain", "utf-8"))
+    if html:
+        message.attach(MIMEText(html, "html", "utf-8"))
+    with smtplib.SMTP(host, port, timeout=MAIL_SEND_TIMEOUT) as smtp:
+        smtp.sendmail(email, [to_email], message.as_string())
+    return True
+
+
+def send_email(subject, text, to_email, category="email_verification", html=None):
+    """Single email entry point. EMAIL_BACKEND=api (default) or smtp."""
+    backend = (app.config.get("EMAIL_BACKEND") or "api").strip().lower()
+    if backend == "smtp":
+        return _send_smtp(subject, text, to_email, category=category, html=html)
+    if backend != "api":
+        raise RuntimeError(f"Unknown EMAIL_BACKEND: {backend}")
+    return _send_mailtrap(subject, text, to_email, category=category, html=html)
 
 
 app = Flask(__name__)
@@ -98,7 +156,16 @@ app.config["MAIL_DEFAULT_SENDER"] = _env_text(
     "MAIL_DEFAULT_SENDER",
     "Granted Reading <noreply@grantedreading.test>",
 )
+app.config["EMAIL_BACKEND"] = _env_text("EMAIL_BACKEND", "api") or "api"
+app.config["SMTP_HOST"] = _env_text("SMTP_HOST", "localhost")
+app.config["SMTP_PORT"] = _env_text("SMTP_PORT", "1025") or "1025"
 APP_VERSION = _env_text("APP_VERSION", "dev")
+# Railway (and similar) terminate TLS at the proxy. Without this, email links and
+# Stripe return URLs become http://… and may use the wrong host.
+if _env_text("RAILWAY_ENVIRONMENT") or _env_text("RAILWAY_PROJECT_ID") or _env_text("TRUST_PROXY"):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 
 def generate_confirmation_token(email):
@@ -843,7 +910,8 @@ def _place_fields(body):
     raw_state = (body.get("state") or "").strip()
     city = (body.get("city") or "").strip()
     school = (body.get("school") or "").strip()
-    district = (body.get("district") or "").strip() or None
+    # Optional: store blank string (not NULL) so older NOT NULL schemas still accept signup.
+    district = (body.get("district") or "").strip()
     if not school:
         raise ValueError("Enter your school.")
     state_name, _state_code = places.normalize_state(raw_state)
@@ -853,7 +921,7 @@ def _place_fields(body):
         raise ValueError("Choose United States for now.")
     country = places.COUNTRY
     state = state_name
-    for value in (country, state, city, school, district or ""):
+    for value in (country, state, city, school, district):
         if len(value) > 255:
             raise ValueError("Keep the country, state, city, school, and district under 255 characters.")
     return country, state, city, school, district
@@ -1062,22 +1130,63 @@ def signup_paid():
     )
 
 
+def _public_base_url(fallback=None):
+    """Absolute site origin for links in email (and Stripe when needed).
+
+    Prefer PUBLIC_BASE_URL in production so reset/verify links never point at an
+    internal host. Otherwise use the request URL (ProxyFix makes this https on Railway).
+    """
+    configured = _env_text("PUBLIC_BASE_URL")
+    if configured:
+        return configured.rstrip("/")
+    if fallback:
+        return str(fallback).rstrip("/")
+    try:
+        return request.url_root.rstrip("/")
+    except RuntimeError:
+        return ""
+
+
+def _email_bodies(greeting, intro, link, expires):
+    text = (
+        f"Hi {greeting},\n\n"
+        f"{intro}\n\n"
+        f"{link}\n\n"
+        f"{expires}\n"
+    )
+    safe_link = (
+        link.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    html = (
+        f"<p>Hi {greeting},</p>"
+        f"<p>{intro}</p>"
+        f'<p><a href="{safe_link}">Open this link</a></p>'
+        f"<p>{expires}</p>"
+        f"<p style=\"word-break:break-all;color:#6b7280;font-size:13px\">{safe_link}</p>"
+    )
+    return text, html
+
+
 def _issue_verification(teacher, host_url):
     """Send the confirm-email link. Returns False when Mailtrap does not accept it."""
     token = generate_confirmation_token(teacher["email"])
-    link = f"{host_url.rstrip('/')}/verify?token={token}"
+    link = f"{_public_base_url(host_url)}/verify?token={token}"
     greeting = teacher.get("first_name") or "there"
-    body = (
-        f"Hi {greeting},\n\n"
-        "Confirm your Granted Reading email by opening this link:\n\n"
-        f"{link}\n\n"
-        "This link expires in 24 hours.\n"
+    text, html = _email_bodies(
+        greeting,
+        "Confirm your Granted Reading email by opening this link:",
+        link,
+        "This link expires in 24 hours.",
     )
     try:
-        _send_mailtrap(
+        send_email(
             "Confirm your Granted Reading account",
-            body,
+            text,
             teacher["email"],
+            html=html,
         )
     except Exception:
         app.logger.exception("Could not send verification email to %s", teacher["email"])
@@ -1107,20 +1216,21 @@ def verify():
 def _issue_password_reset(teacher, host_url):
     """Send the reset link. Returns False when Mailtrap does not accept it."""
     token = generate_reset_token(teacher["email"])
-    link = f"{host_url.rstrip('/')}/reset?token={token}"
+    link = f"{_public_base_url(host_url)}/reset?token={token}"
     greeting = teacher.get("first_name") or "there"
-    body = (
-        f"Hi {greeting},\n\n"
-        "Choose a new Granted Reading password by opening this link:\n\n"
-        f"{link}\n\n"
-        "This link expires in 1 hour.\n"
+    text, html = _email_bodies(
+        greeting,
+        "Choose a new Granted Reading password by opening this link:",
+        link,
+        "This link expires in 1 hour.",
     )
     try:
-        _send_mailtrap(
+        send_email(
             "Reset your Granted Reading password",
-            body,
+            text,
             teacher["email"],
             category="password_reset",
+            html=html,
         )
     except Exception:
         app.logger.exception("Could not send password reset email to %s", teacher["email"])
@@ -1139,7 +1249,7 @@ def forgot_password():
     teacher = db.find_teacher_by_email(email)
     if teacher is None:
         return jsonify({"ok": True, "email_sent": True})
-    sent = _issue_password_reset(teacher, request.host_url)
+    sent = _issue_password_reset(teacher, _public_base_url())
     if not sent:
         return jsonify({
             "error": "We could not send the reset email. Try again.",
@@ -1462,6 +1572,39 @@ def stripe_webhook():
         return jsonify({"error": "Could not process event."}), 500
     app.logger.info("Stripe webhook %s (%s): %s", event["id"], event["type"], outcome)
     return jsonify({"received": True})
+
+
+@app.route("/webhooks/runpod", methods=["POST"])
+def runpod_webhook():
+    """Signed Runpod job callback. Production image gen still polls; MOCK_AI
+    and tests post here to exercise signature checks and event dedup.
+    """
+    secret = _env_text("RUNPOD_WEBHOOK_SECRET")
+    if not secret:
+        return jsonify({"error": "Runpod webhook is not configured."}), 500
+    body = request.get_data()
+    if not verify_runpod_signature(body, request.headers.get("X-Runpod-Signature"), secret=secret):
+        app.logger.warning("Rejected a Runpod webhook with a bad signature")
+        return jsonify({"error": "Invalid signature."}), 400
+    try:
+        payload = request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return jsonify({"error": "Invalid JSON."}), 400
+    job_id = str(payload.get("id") or payload.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "Missing job id."}), 400
+    event_id = f"runpod:{job_id}"
+    event_type = f"runpod.{(payload.get('status') or 'completed')}".lower()
+    try:
+        with db.engine.begin() as conn:
+            if not db.claim_webhook_event(conn, event_id, event_type):
+                app.logger.info("Runpod webhook duplicate for job %s", job_id)
+                return jsonify({"received": True, "duplicate": True})
+    except Exception:
+        app.logger.exception("Runpod webhook claim failed for job %s", job_id)
+        return jsonify({"error": "Could not process event."}), 500
+    app.logger.info("Runpod webhook accepted for job %s status=%s", job_id, payload.get("status"))
+    return jsonify({"received": True, "duplicate": False, "job_id": job_id})
 
 
 def _pilot_from_code(raw):

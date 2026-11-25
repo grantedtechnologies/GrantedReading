@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 STORY_MAX_CHARS = 900
 QUESTION_MAX_CHARS = 140
 TITLE_MAX_CHARS = 60
+# Saved vocab lists can be longer than a quick typed set; keep enough room
+# for a full unit list while still bounding prompt size.
+FOCUS_VOCAB_MAX = 12
 
 WORKSHEET_SYSTEM_PROMPT = f"""You are a reading comprehension worksheet generator for special education teachers.
 
@@ -42,7 +45,7 @@ Rules:
 - The story must be one paragraph with no line breaks.
 - The finished worksheet must fit on ONE printed page. Keep the story under {STORY_MAX_CHARS} characters (about 150–170 words). Keep the title under {TITLE_MAX_CHARS} characters. Keep each question under {QUESTION_MAX_CHARS} characters.
 - Do not include notes, analysis, rewriting steps, or thinking — only the final title, story, and questions.
-- If a focus vocabulary word is given, use that exact word 3 to 5 times in the story. Weave it in naturally so the reader meets it in context. Do not replace it with a simpler synonym.
+- If focus vocabulary words are given, use each exact word in the story. With 1–3 words, use each about 3 to 5 times. With more words, use each at least once (twice when it still sounds natural). Weave them in so the reader meets them in context. Do not replace them with simpler synonyms.
 - If a phonics pattern is given, include 3 to 5 different words that contain that exact letter pattern (for example, "tion" in station, mention, action). Use those words naturally so the reader practices the pattern.
 
 Respond with ONLY valid JSON (no markdown, no extra text) in this exact shape:
@@ -105,24 +108,62 @@ Rules:
 - Replace words marked too_hard with simpler ones from level_vocab when possible.
 - Fix sentences marked too_long (split or shorten) or too_short (combine or expand).
 - Preserve every protected term exactly as written (spelling unchanged).
+- If missing_vocabulary lists words, weave each exact word into the story
+  naturally at least once (a few times when there are only a couple of words).
+  Do not dump them at the end. Do not replace them with synonyms.
 - Return ONLY the rewritten passage as plain text. No JSON, no markdown."""
 
 
-def _brief_for_prompt(report: dict[str, Any], protected_terms: list[str]) -> str:
+def missing_protected_terms(text: str, terms: list[str] | None) -> list[str]:
+    """Focus vocab / protected words that do not appear in the passage yet."""
+    lowered = (text or "").lower()
+    missing = []
+    seen = set()
+    for term in terms or []:
+        key = str(term or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if key not in lowered:
+            missing.append(term)
+    return missing
+
+
+def _brief_for_prompt(
+    report: dict[str, Any],
+    protected_terms: list[str],
+    *,
+    missing_vocabulary: list[str] | None = None,
+) -> str:
     """Compact JSON the model can follow."""
     hard_words = [w["word"] for w in report["too_hard"]["words"][:25]]
     easy_words = [w["word"] for w in report["too_easy"]["words"][:15]]
     long_sents = [s["sentence"] for s in report["too_hard"]["sentences"][:8]]
     short_sents = [s["sentence"] for s in report["too_easy"]["sentences"][:8]]
     vocab = report.get("level_vocab") or []
+    missing = list(missing_vocabulary or [])
 
-    direction = (
-        "The passage scores BELOW the band — make vocabulary and sentences "
-        "a bit richer (avoid padding with only ultra-common words)."
-        if report["below_target"]
-        else "The passage scores ABOVE the band — simplify hard words and "
-        "shorten long sentences."
-    )
+    if report.get("in_band"):
+        direction = (
+            "The passage is already in the target band — keep the reading level "
+            "steady while fixing the listed issues."
+        )
+    elif report["below_target"]:
+        direction = (
+            "The passage scores BELOW the band — make vocabulary and sentences "
+            "a bit richer (avoid padding with only ultra-common words)."
+        )
+    else:
+        direction = (
+            "The passage scores ABOVE the band — simplify hard words and "
+            "shorten long sentences."
+        )
+    if missing:
+        quoted = ", ".join(f'"{term}"' for term in missing)
+        direction += (
+            f" Focus vocabulary missing from the passage: {quoted}. "
+            "Add each exact word into the story naturally."
+        )
 
     payload = {
         "direction": direction,
@@ -135,6 +176,7 @@ def _brief_for_prompt(report: dict[str, Any], protected_terms: list[str]) -> str
         "too_short_sentences": short_sents,
         "prefer_these_words": vocab[:80],
         "protected_terms": list(protected_terms or []),
+        "missing_vocabulary": missing,
     }
     return json.dumps(payload, indent=2)
 
@@ -144,10 +186,13 @@ def _rewrite_once(
     report: dict[str, Any],
     protected_terms: list[str],
     generate: GenerateFn,
+    *,
+    missing_vocabulary: list[str] | None = None,
 ) -> str:
+    missing = list(missing_vocabulary or [])
     user = (
         f"Rewrite this passage for {report['target_band']}.\n\n"
-        f"Brief:\n{_brief_for_prompt(report, protected_terms)}\n\n"
+        f"Brief:\n{_brief_for_prompt(report, protected_terms, missing_vocabulary=missing)}\n\n"
         f"Passage:\n{text.strip()}"
     )
     return generate(user, system=_REWRITE_SYSTEM).strip()
@@ -162,19 +207,25 @@ def level_story(
     generate: GenerateFn | None = None,
     passage_type: str | None = None,
 ) -> LevelOutcome:
-    """Score → optional one-shot AI rewrite → re-score.
+    """Score → rewrite for band and/or missing focus vocab → re-score.
 
-    Never raises on a band miss when allow_rewrite is used for teacher review:
-    returns the best text with gate_passed=False. Callers that need a hard
-    guarantee can check gate_passed themselves.
+    The first rewrite fixes reading-level issues and any missing focus
+    vocabulary found in the draft. If vocab is still missing afterward, a
+    second rewrite is told to weave those words in. Never raises on a band
+    miss when allow_rewrite is used for teacher review: returns the best text
+    with gate_passed=False.
     """
     del passage_type  # kept for call-site compatibility; not used by this pipeline
     protected = list(protected_terms or [])
     band = rl_score.target_band(target_grade)
     first = rl_score.analyze_passage(text, target_grade)
     initial_score = first["score"]
+    missing = missing_protected_terms(text, protected)
+    needs_level_fix = not first["in_band"]
+    needs_vocab_fix = bool(missing)
+    needs_rewrite = allow_rewrite and (needs_level_fix or needs_vocab_fix)
 
-    if first["in_band"] or not allow_rewrite:
+    if not needs_rewrite:
         result = CorrectionResult(
             text=text,
             initial_score=initial_score,
@@ -206,11 +257,29 @@ def level_story(
             band=band,
         )
 
-    rewritten = text
+    current = text
     applied = False
     try:
-        rewritten = _rewrite_once(text, first, protected, generate)
-        applied = rewritten.strip() != text.strip()
+        # Pass 1: level issues and/or missing focus vocab found in the draft.
+        current = _rewrite_once(
+            current, first, protected, generate, missing_vocabulary=missing
+        )
+        applied = current.strip() != text.strip()
+
+        # Pass 2: if vocab is still missing, tell the rewriter to add it.
+        still_missing = missing_protected_terms(current, protected)
+        if still_missing:
+            second_report = rl_score.analyze_passage(current, target_grade)
+            second = _rewrite_once(
+                current,
+                second_report,
+                protected,
+                generate,
+                missing_vocabulary=still_missing,
+            )
+            if second.strip():
+                current = second
+                applied = True
     except Exception:
         logger.exception("Reading-level rewrite failed; keeping original")
         result = CorrectionResult(
@@ -236,11 +305,11 @@ def level_story(
             final_report=rl_score.report_as_json(first),
         )
 
-    # Re-assert protected terms if the model dropped them.
-    final_text = rewritten
-    for term in protected:
-        if term and term.lower() not in final_text.lower() and term in text:
-            final_text = f"{final_text.rstrip()} {term}"
+    # Last resort: if the model still omitted a focus word, append it so the
+    # worksheet at least contains the requested vocabulary.
+    final_text = current
+    for term in missing_protected_terms(final_text, protected):
+        final_text = f"{final_text.rstrip()} {term}"
 
     final = rl_score.analyze_passage(final_text, target_grade)
     final_score = final["score"]
@@ -355,15 +424,21 @@ _STORY_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 
 def parse_focus_vocabulary(raw) -> list[str]:
-    """Teacher-chosen words to repeat in the story and leave untouched.
+    """Teacher-chosen words to include in the story and leave untouched.
 
-    Commas separate terms. Caps at three so the story does not become a list.
+    Commas separate terms. Accepts a pre-parsed list. Caps at
+    FOCUS_VOCAB_MAX so a full saved list can be used without ballooning
+    the prompt.
     """
     if not raw:
         return []
+    if isinstance(raw, (list, tuple)):
+        parts = [str(part) for part in raw]
+    else:
+        parts = str(raw).replace(";", ",").split(",")
     terms = []
     seen = set()
-    for part in str(raw).replace(";", ",").split(","):
+    for part in parts:
         term = " ".join(part.split())
         if not term or len(term) > 40:
             continue
@@ -372,7 +447,7 @@ def parse_focus_vocabulary(raw) -> list[str]:
             continue
         seen.add(key)
         terms.append(term)
-        if len(terms) == 3:
+        if len(terms) >= FOCUS_VOCAB_MAX:
             break
     return terms
 
@@ -824,10 +899,20 @@ def build_worksheet_user_prompt(
     terms = list(focus_vocabulary or [])
     if terms:
         quoted = ", ".join(f'"{term}"' for term in terms)
+        if len(terms) <= 3:
+            usage = (
+                "Use each of these exact words or short phrases 3 to 5 times "
+                "in the story."
+            )
+        else:
+            usage = (
+                "Use each of these exact words or short phrases at least once "
+                "in the story (twice when it still sounds natural)."
+            )
         user_prompt += (
-            f" Focus vocabulary: {quoted}. Use each of these exact words "
-            f"or short phrases 3 to 5 times in the story. Keep the spelling "
-            f"exactly. Do not swap in an easier synonym."
+            f" Focus vocabulary: {quoted}. {usage} Keep the spelling "
+            f"exactly. Do not swap in an easier synonym. Do not leave any "
+            f"of these words out."
         )
     phonics = parse_focus_phonics(focus_phonics)
     if phonics:
@@ -867,18 +952,30 @@ def validate_structure(data):
     return True
 
 
-def _clip_chars(text, limit):
-    value = " ".join(str(text or "").split())
+def _clip_chars(text, limit, *, keep_line_breaks=False):
+    """Clip length for PDF fields.
+
+    Titles/questions collapse all whitespace. Stories keep blank lines and
+    single newlines so teacher edits that add paragraph spacing show up in
+    the PDF (only soft-wrapping spaces/tabs within a line are normalized).
+    """
+    raw = str(text or "")
+    if keep_line_breaks:
+        normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+        lines = [" ".join(line.split()) for line in normalized.split("\n")]
+        value = "\n".join(lines).strip(" \t")
+    else:
+        value = " ".join(raw.split())
     if len(value) <= limit:
         return value
-    clipped = value[: max(0, limit - 1)].rstrip(" ,;:-")
+    clipped = value[: max(0, limit - 1)].rstrip(" \t,;:-")
     return f"{clipped}…"
 
 
 def normalize_model_output(data):
     payload = {
         "Title": _clip_chars(data["title"], TITLE_MAX_CHARS),
-        "Story": _clip_chars(data["story"], STORY_MAX_CHARS),
+        "Story": _clip_chars(data["story"], STORY_MAX_CHARS, keep_line_breaks=True),
     }
     for index, (_key, stem) in enumerate(ordered_question_items(data.get("questions")), start=1):
         payload[f"Q{index}"] = _clip_chars(stem, QUESTION_MAX_CHARS)

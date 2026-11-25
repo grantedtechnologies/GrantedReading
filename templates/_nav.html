@@ -21,8 +21,8 @@
         {% endif %}
       </button>
       <div class="account-menu-dropdown" id="account-menu" hidden>
-        <a href="/account#surveys">Account{% if survey_pending_count %} <span class="survey-menu-dot" aria-hidden="true"></span>{% endif %}</a>
-        <a href="/logout">Sign out</a>
+        <a href="/account#surveys" data-testid="nav-account">Account{% if survey_pending_count %} <span class="survey-menu-dot" aria-hidden="true"></span>{% endif %}</a>
+        <a href="/logout" data-testid="nav-logout">Sign out</a>
       </div>
     </div>
     {% else %}

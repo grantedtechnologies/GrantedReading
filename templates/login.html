@@ -198,23 +198,23 @@
     <h1 id="heading">Create an account</h1>
 
     <div class="mode-nav" id="mode-nav">
-      <button type="button" id="tab-signin">Sign in</button>
-      <button type="button" id="tab-signup" class="active">Sign up</button>
+      <button type="button" id="tab-signin" data-testid="tab-signin">Sign in</button>
+      <button type="button" id="tab-signup" class="active" data-testid="tab-signup">Sign up</button>
     </div>
 
     <form id="auth-form">
       <div id="name-fields">
         <div class="field">
           <label for="first-name">First name</label>
-          <input id="first-name" name="first_name" autocomplete="given-name" />
+          <input id="first-name" name="first-name" autocomplete="given-name" data-testid="signup-first-name" />
         </div>
         <div class="field">
           <label for="last-name">Last name</label>
-          <input id="last-name" name="last_name" autocomplete="family-name" />
+          <input id="last-name" name="last_name" autocomplete="family-name" data-testid="signup-last-name" />
         </div>
         <div class="field">
           <label for="school">School</label>
-          <input id="school" name="school" autocomplete="organization" />
+          <input id="school" name="school" autocomplete="organization" data-testid="signup-school" />
         </div>
         <div id="place-manual">
           <div class="field">
@@ -223,13 +223,13 @@
           </div>
           <div class="field">
             <label for="state">State</label>
-            <select id="state" name="state" autocomplete="address-level1">
+            <select id="state" name="state" autocomplete="address-level1" data-testid="signup-state">
               <option value="">Select a state</option>
             </select>
           </div>
           <div class="field">
             <label for="city">City</label>
-            <select id="city" name="city" autocomplete="address-level2">
+            <select id="city" name="city" autocomplete="address-level2" data-testid="signup-city">
               <option value="">Select a city</option>
             </select>
           </div>
@@ -243,36 +243,36 @@
       </div>
       <div class="field">
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="email" required />
+        <input id="email" name="email" type="email" autocomplete="email" required data-testid="auth-email" />
       </div>
       <div class="field">
         <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <input id="password" name="password" type="password" autocomplete="current-password" required data-testid="auth-password" />
         <p class="note hidden" id="password-hint">Use at least one letter, one number, and one symbol.</p>
       </div>
       <p class="forgot-row hidden" id="forgot-row">
-        <button type="button" class="text-link" id="forgot-open">Forgot password?</button>
+        <button type="button" class="text-link" id="forgot-open" data-testid="forgot-open">Forgot password?</button>
       </p>
       <div class="field hidden" id="confirm-field">
         <label for="confirm-password">Re-enter password</label>
-        <input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" />
+        <input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" data-testid="signup-confirm-password" />
       </div>
       <div id="plan-fields" class="field">
         <label>Plan</label>
         <div class="plan-grid">
-          <label class="plan-card selected" id="plan-standard">
+          <label class="plan-card selected" id="plan-standard" data-testid="plan-standard">
             <input type="radio" name="membership" value="standard" checked />
             <div class="plan-name">Standard</div>
             <div class="plan-price">Free</div>
             <div class="plan-note">1 new worksheet a day · unlimited edits</div>
           </label>
-          <label class="plan-card" id="plan-pro">
+          <label class="plan-card" id="plan-pro" data-testid="plan-pro">
             <input type="radio" name="membership" value="pro" />
             <div class="plan-name">Pro</div>
             <div class="plan-price">$5.99</div>
             <div class="plan-note">Unlimited worksheets</div>
           </label>
-          <label class="plan-card" id="plan-pilot">
+          <label class="plan-card" id="plan-pilot" data-testid="plan-pilot">
             <input type="radio" name="membership" value="pilot" />
             <div class="plan-name">Pilot</div>
             <div class="plan-price">School code</div>
@@ -283,48 +283,48 @@
       </div>
       <div class="field hidden" id="pilot-field">
         <label for="pilot-code">Pilot code</label>
-        <input id="pilot-code" name="pilot_code" type="text" autocomplete="off" />
+        <input id="pilot-code" name="pilot_code" type="text" autocomplete="off" data-testid="signup-pilot-code" />
         <p class="note">Enter the code from your school. You’ll still continue to payment for Pro; the confirmation email comes after that.</p>
       </div>
-      <div class="error" id="error"></div>
-      <button class="submit{% if not resume_checkout %} hidden{% endif %}" id="resume-checkout" type="button">Continue to payment</button>
-      <button class="submit" id="submit" type="submit">Sign up</button>
+      <div class="error" id="error" data-testid="auth-error"></div>
+      <button class="submit{% if not resume_checkout %} hidden{% endif %}" id="resume-checkout" type="button" data-testid="resume-checkout">Continue to payment</button>
+      <button class="submit" id="submit" type="submit" data-testid="auth-submit">Sign up</button>
     </form>
 
-    <div id="check-email" class="hidden">
+    <div id="check-email" class="hidden" data-testid="check-email">
       <p class="note" id="check-email-note">Check your inbox for a confirmation link. It expires in 24 hours.</p>
-      <div class="error" id="resend-error"></div>
-      <button class="submit" id="resend-btn" type="button">Resend email</button>
+      <div class="error" id="resend-error" data-testid="resend-error"></div>
+      <button class="submit" id="resend-btn" type="button" data-testid="resend-verification">Resend email</button>
     </div>
 
-    <form id="forgot-form" class="hidden">
+    <form id="forgot-form" class="hidden" data-testid="forgot-form">
       <p class="note">Enter the email on your account. If it matches, we will send a link to choose a new password.</p>
       <div class="field">
         <label for="forgot-email">Email</label>
-        <input id="forgot-email" type="email" autocomplete="email" />
+        <input id="forgot-email" type="email" autocomplete="email" data-testid="forgot-email" />
       </div>
-      <div class="error" id="forgot-error"></div>
-      <button class="submit" id="forgot-submit" type="submit">Send reset link</button>
-      <button type="button" class="text-link" id="forgot-back">Back to sign in</button>
+      <div class="error" id="forgot-error" data-testid="forgot-error"></div>
+      <button class="submit" id="forgot-submit" type="submit" data-testid="forgot-submit">Send reset link</button>
+      <button type="button" class="text-link" id="forgot-back" data-testid="forgot-back">Back to sign in</button>
     </form>
 
-    <div id="reset-sent" class="hidden">
+    <div id="reset-sent" class="hidden" data-testid="reset-sent">
       <p class="note" id="reset-sent-note">If an account uses that email, we sent a reset link. It expires in 1 hour.</p>
       <button type="button" class="text-link" id="reset-sent-back">Back to sign in</button>
     </div>
 
-    <form id="reset-form" class="hidden">
+    <form id="reset-form" class="hidden" data-testid="reset-form">
       <p class="note">Choose a new password. Use a letter, a number, and a symbol. This link expires in 1 hour.</p>
       <div class="field">
         <label for="reset-password">New password</label>
-        <input id="reset-password" type="password" autocomplete="new-password" />
+        <input id="reset-password" type="password" autocomplete="new-password" data-testid="reset-password" />
       </div>
       <div class="field">
         <label for="reset-confirm">Re-enter password</label>
-        <input id="reset-confirm" type="password" autocomplete="new-password" />
+        <input id="reset-confirm" type="password" autocomplete="new-password" data-testid="reset-confirm" />
       </div>
-      <div class="error" id="reset-error"></div>
-      <button class="submit" id="reset-submit" type="submit">Save password</button>
+      <div class="error" id="reset-error" data-testid="reset-error"></div>
+      <button class="submit" id="reset-submit" type="submit" data-testid="reset-submit">Save password</button>
     </form>
   </div>
 
@@ -333,12 +333,14 @@
   const placeFields = setupPlaceFields();
   let mode = {{ (initial_mode or "signup")|tojson }};
   let pendingEmail = "";
+  const canResumeCheckout = {{ "true" if resume_checkout else "false" }};
 
   function setMode(next) {
     mode = next;
     const signingUp = mode === "signup";
     const forgot = mode === "forgot";
     const resetting = mode === "reset";
+    const showResume = canResumeCheckout && signingUp && !forgot && !resetting;
     document.getElementById("check-email").classList.add("hidden");
     document.getElementById("reset-sent").classList.add("hidden");
     document.getElementById("auth-form").classList.toggle("hidden", forgot || resetting);
@@ -347,16 +349,25 @@
     document.getElementById("mode-nav").classList.toggle("hidden", forgot || resetting);
     document.getElementById("tab-signin").classList.toggle("active", !signingUp);
     document.getElementById("tab-signup").classList.toggle("active", signingUp);
-    document.getElementById("name-fields").classList.toggle("hidden", !signingUp);
-    document.getElementById("plan-fields").classList.toggle("hidden", !signingUp);
+    document.getElementById("name-fields").classList.toggle("hidden", !signingUp || showResume);
+    document.getElementById("plan-fields").classList.toggle("hidden", !signingUp || showResume);
     document.getElementById("forgot-row").classList.toggle("hidden", signingUp || forgot || resetting);
     syncPlan();
-    document.getElementById("confirm-field").classList.toggle("hidden", !signingUp);
-    document.getElementById("password-hint").classList.toggle("hidden", !signingUp);
+    if (showResume) {
+      document.getElementById("pilot-field").classList.add("hidden");
+    }
+    document.getElementById("confirm-field").classList.toggle("hidden", !signingUp || showResume);
+    document.getElementById("password-hint").classList.toggle("hidden", !signingUp || showResume);
     document.getElementById("password").autocomplete = signingUp ? "new-password" : "current-password";
+    // Pending Stripe checkout: one primary action only (not Sign up + Continue).
+    document.getElementById("resume-checkout").classList.toggle("hidden", !showResume);
+    document.getElementById("submit").classList.toggle("hidden", showResume);
+    document.getElementById("email").closest(".field").classList.toggle("hidden", showResume);
+    document.getElementById("password").closest(".field").classList.toggle("hidden", showResume);
     const heading = document.getElementById("heading");
     if (resetting) heading.textContent = "Choose a new password";
     else if (forgot) heading.textContent = "Reset your password";
+    else if (showResume) heading.textContent = "Finish payment";
     else heading.textContent = signingUp ? "Create an account" : "Sign in";
     document.getElementById("submit").textContent = signingUp ? "Sign up" : "Sign in";
     document.getElementById("error").textContent = "";
@@ -623,16 +634,18 @@
         window.location.href = data.checkout_url;
         return;
       }
-      if (data.email_sent && data.needs_verification) {
+      // Always show the check-email screen when the account needs verification,
+      // even if the first send failed (resend is on that screen).
+      if (data.needs_verification) {
         showCheckEmail(email);
+        if (!response.ok || data.email_sent === false) {
+          document.getElementById("resend-error").textContent =
+            data.error || "We could not send the confirmation email. Click Resend to try again.";
+        }
         return;
       }
       if (!response.ok) {
         error.textContent = data.error || "Could not complete that.";
-        return;
-      }
-      if (data.needs_verification) {
-        error.textContent = data.error || "We could not send the confirmation email. Try again.";
         return;
       }
       window.location.href = data.redirect || "/worksheet";

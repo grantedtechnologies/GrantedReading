@@ -88,15 +88,15 @@
   <section class="card">
     <h2>Classes</h2>
     <p class="hint">A class can be removed here until it has a student.</p>
-    <form id="class-form">
+    <form id="class-form" data-testid="class-form">
       <div class="row">
         <div class="field">
           <label for="class-name">Class name</label>
-          <input id="class-name" placeholder="1st Period ELA" />
+          <input id="class-name" placeholder="1st Period ELA" data-testid="class-name" />
         </div>
         <div class="field">
           <label for="class-subject">Subject</label>
-          <input id="class-subject" placeholder="English" />
+          <input id="class-subject" placeholder="English" data-testid="class-subject" />
         </div>
       </div>
       <div class="row">
@@ -117,10 +117,10 @@
           <option value="excelerated/AP">Accelerated/AP</option>
         </select>
       </div>
-      <button class="submit" type="submit">Add class</button>
-      <div class="status" id="class-status"></div>
+      <button class="submit" type="submit" data-testid="class-submit">Add class</button>
+      <div class="status" id="class-status" data-testid="class-status"></div>
     </form>
-    <div id="class-list" style="margin-top:18px"></div>
+    <div id="class-list" style="margin-top:18px" data-testid="class-list"></div>
   </section>
 
   {% if from_account %}
@@ -186,8 +186,8 @@
       return;
     }
     box.innerHTML = classes.map((item) => `
-      <div class="class-row" data-class-id="${item.class_id}">
-        <a class="class-link" href="/classes/${item.class_id}">
+      <div class="class-row" data-class-id="${item.class_id}" data-testid="class-row-${item.class_id}">
+        <a class="class-link" href="/classes/${item.class_id}" data-testid="class-link-${item.class_id}">
           <div class="class-name">${escapeHtml(item.name)}</div>
           <div class="class-meta">${escapeHtml(item.subject)} · ${escapeHtml(classTypeLabels[item.class_type] || item.class_type)} · ${escapeHtml(gradeLabel(item.grade_level))} · ${escapeHtml(item.school_year)}</div>
         </a>

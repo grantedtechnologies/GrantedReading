@@ -1,0 +1,30 @@
+AVERY KIM — UI-path retest after raising FOCUS_VOCAB_MAX
+============================================================
+Vocab list: History unit
+Words sent: colony, settle, trade, war, native, culture, policy, philosophy, ancient
+Words kept by parser (9): colony, settle, trade, war, native, culture, policy, philosophy, ancient
+
+TITLE
+----------------------------------------
+The Roman Colony in Britain
+
+FINAL STORY
+----------------------------------------
+Long ago, the Romans formed a colony in Britain to grow their empire. They planned to settle near a big river for easy trade. The native people had their own ancient culture and philosophy of living with the land. A war broke out because the Romans wanted to control the land. After the war, the Roman policy asked the natives to act like Romans. This philosophy of change was not easy for the native groups. They acted to protect their ancient ways. The Romans built a new market for trade. This helped the colony grow near the heart of Britain. Although the war was hard, the colony became a major place for trade and development. The native people learned to form new friendships among the Romans. They mixed their ancient culture with Roman arts. The colony lived on, and its culture still shows in Britain today.
+
+VOCAB CHECK
+----------------------------------------
+  [OK] colony
+  [OK] settle
+  [OK] trade
+  [OK] war
+  [OK] native
+  [OK] culture
+  [OK] policy
+  [OK] philosophy
+  [OK] ancient
+
+Missing: (none)
+LLM rewrite applied: True
+Final grade: 4.43
+In band: True

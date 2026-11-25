@@ -1,4 +1,6 @@
 .env
+.env.test
+e2e_logs/
 worksheets/
 .venv/
 venv/

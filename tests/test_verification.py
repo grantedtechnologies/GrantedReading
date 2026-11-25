@@ -60,8 +60,35 @@ def test_signup_allows_blank_district(monkeypatch):
     with _client(monkeypatch) as client:
         response = client.post("/signup", json=body)
     assert response.status_code == 200
+    assert response.get_json()["needs_verification"] is True
+    assert response.get_json()["email_sent"] is True
     assert created
-    assert created[0][5] is None
+    # Blank district is stored as "" so NOT NULL schemas still accept the row.
+    assert created[0][5] == ""
+
+
+def test_signup_still_shows_verification_when_email_send_fails(monkeypatch):
+    monkeypatch.setattr(app_module.db, "find_teacher_by_email", lambda email: None)
+    monkeypatch.setattr(
+        app_module.db,
+        "create_teacher",
+        lambda *args: {
+            "teacher_id": 9,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@x.test",
+            "verified": 0,
+        },
+    )
+    monkeypatch.setattr(app_module, "_issue_verification", lambda *args: False)
+    body = _signup_body()
+    body["district"] = ""
+    with _client(monkeypatch) as client:
+        response = client.post("/signup", json=body)
+    data = response.get_json()
+    assert response.status_code == 503
+    assert data["needs_verification"] is True
+    assert data["email_sent"] is False
 
 
 def test_signup_reports_when_the_confirmation_email_does_not_send(monkeypatch):
@@ -310,6 +337,8 @@ def test_verification_email_posts_to_mailtrap_api(monkeypatch):
     assert payload["to"] == [{"email": "ada@x.test"}]
     assert "Confirm your Granted Reading" in payload["subject"]
     assert "http://127.0.0.1:5000/verify?token=" in payload["text"]
+    assert "http://127.0.0.1:5000/verify?token=" in payload["html"]
+    assert 'href="http://127.0.0.1:5000/verify?token=' in payload["html"]
     assert payload["category"] == "email_verification"
 
 
@@ -353,6 +382,8 @@ def test_reset_email_uses_its_own_link(monkeypatch):
     payload = captured[0]
     assert payload["category"] == "password_reset"
     assert "/reset?token=" in payload["text"]
+    assert "/reset?token=" in payload["html"]
+    assert 'href="' in payload["html"] and "/reset?token=" in payload["html"]
     assert "/verify?token=" not in payload["text"]
     token = payload["text"].split("/reset?token=", 1)[1].split()[0]
     assert app_module.confirm_token(token) is None

@@ -70,6 +70,19 @@ body {
   line-height: 1.4;
 }
 
+.story-para {
+  margin: 0 0 0.7em 0;
+}
+
+.story-para:last-child {
+  margin-bottom: 0;
+}
+
+.story-para-blank {
+  margin: 0 0 0.7em 0;
+  line-height: 0.7em;
+}
+
 .image-col {
   width: 180px;
 }
@@ -171,6 +184,19 @@ body {
   line-height: 1.3;
 }
 
+.story-para {
+  margin: 0 0 0.55em 0;
+}
+
+.story-para:last-child {
+  margin-bottom: 0;
+}
+
+.story-para-blank {
+  margin: 0 0 0.55em 0;
+  line-height: 0.55em;
+}
+
 .image-col {
   width: 150px;
 }
@@ -261,9 +287,35 @@ def decode_image_bytes(data):
         return None
 
 
+def _story_html(text):
+    """Turn teacher line breaks into visible PDF spacing.
+
+    Single newlines become <br/>. Blank lines become separate paragraphs so
+    vertical space between passage parts is preserved in the rendered PDF.
+    Extra blank lines add extra vertical gaps.
+    """
+    escaped = html.escape(str(text or "")).replace("\r\n", "\n").replace("\r", "\n")
+    if not escaped.strip():
+        return ""
+    chunks = re.split(r"(\n\s*\n+)", escaped)
+    parts = []
+    for chunk in chunks:
+        if re.fullmatch(r"\n\s*\n+", chunk):
+            # One \n\n is the paragraph break (CSS margin). More newlines →
+            # extra blank paragraphs for the vertical space the teacher left.
+            for _ in range(max(0, chunk.count("\n") - 2)):
+                parts.append('<p class="story-para story-para-blank">&nbsp;</p>')
+            continue
+        if not chunk.strip():
+            continue
+        body = chunk.strip("\n").replace("\n", "<br/>")
+        parts.append(f'<p class="story-para">{body}</p>')
+    return "".join(parts)
+
+
 def build_worksheet_html(data, include_image_slot=False):
     title = html.escape(str(data.get("Title", "")))
-    story = html.escape(str(data.get("Story", ""))).replace("\n", "<br/>")
+    story = _story_html(data.get("Story", ""))
 
     image_cell = ""
     if include_image_slot:
@@ -463,7 +515,7 @@ def blocks_to_worksheet_data(title, blocks):
 
     data = {
         "Title": title_text,
-        "Story": " ".join(passages),
+        "Story": "\n\n".join(passages),
         "image": image,
     }
     for index, question in enumerate(questions[: len(QUESTION_FIELDS)], start=1):
@@ -502,14 +554,14 @@ def build_blocks_html(title, blocks):
     assets = []
     question_index = 0
     for block in blocks:
-        text = html.escape(_block_field(block, "text") or "")
-        text = text.replace("\n", "<br/>")
+        raw_text = _block_field(block, "text") or ""
+        text = html.escape(raw_text).replace("\n", "<br/>")
         block_type = _block_field(block, "block_type")
         if block_type == "instructions":
             parts.append(f'<p class="instructions">{text}</p>')
         elif block_type == "passage":
             parts.append(
-                f'<table class="story-table"><tr><td class="story-col">{text}</td></tr></table>'
+                f'<table class="story-table"><tr><td class="story-col">{_story_html(raw_text)}</td></tr></table>'
             )
         elif block_type == "question":
             question_index += 1

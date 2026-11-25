@@ -415,15 +415,15 @@
     </form>
   </section>
 
-  <section class="card" id="billing-card" hidden>
+  <section class="card" id="billing-card" hidden data-testid="billing-card">
     <h2>Plan</h2>
     <p class="hint" id="billing-hint">Switch plans anytime. Pro is billed on Stripe.</p>
     <div class="plan-grid">
-      <button type="button" class="plan-card" id="plan-standard">
+      <button type="button" class="plan-card" id="plan-standard" data-testid="account-plan-standard">
         <div class="plan-name">Standard</div>
         <div class="plan-price">Free · 1 new worksheet a day · unlimited edits</div>
       </button>
-      <button type="button" class="plan-card" id="plan-pro">
+      <button type="button" class="plan-card" id="plan-pro" data-testid="account-plan-pro">
         <div class="plan-name">Pro</div>
         <div class="plan-price" id="plan-pro-price">$5.99 · unlimited worksheets</div>
       </button>
@@ -441,7 +441,7 @@
       </div>
       <p class="hint" id="pilot-redeem-hint">Redeems pilot access, then opens Stripe Checkout so you can enter that same code for 100% off Pro.</p>
     </div>
-    <div class="status" id="billing-status"></div>
+    <div class="status" id="billing-status" data-testid="billing-status"></div>
   </section>
 </main>
 

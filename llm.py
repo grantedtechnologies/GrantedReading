@@ -89,6 +89,10 @@ def _llm_endpoint():
 
 
 def require_foundry_config():
+    from ai_fixtures import mock_ai_enabled
+
+    if mock_ai_enabled():
+        return
     missing = [
         name for name in (*FOUNDRY_AUTH_VARS, "LLM_ENDPOINT")
         if not (os.environ.get(name) or "").strip()
@@ -111,6 +115,10 @@ def foundry_credential():
 
 def ensure_ai_configured():
     """Require Foundry + RunPod env so worksheet generation can finish end-to-end."""
+    from ai_fixtures import mock_ai_enabled
+
+    if mock_ai_enabled():
+        return
     missing = []
     for name in FOUNDRY_AUTH_VARS:
         if not (os.environ.get(name) or "").strip():
@@ -353,6 +361,10 @@ def _structured_model_name():
 
 def generate_text(prompt, system=None):
     """Free-text model call (rewrites, open-ended writing)."""
+    from ai_fixtures import mock_ai_enabled, mock_generate_text
+
+    if mock_ai_enabled():
+        return mock_generate_text(prompt, system=system)
     ensure_ai_configured()
     content = prompt
     if system:
@@ -383,6 +395,10 @@ def _parse_json_object(raw_text) -> dict | None:
 
 def generate_json(prompt, schema, *, name="response", system=None) -> dict:
     """Enforced JSON via chat.completions response_format (strict schema)."""
+    from ai_fixtures import mock_ai_enabled, mock_generate_json
+
+    if mock_ai_enabled():
+        return mock_generate_json(prompt, schema, name=name)
     ensure_ai_configured()
     messages = [
         {

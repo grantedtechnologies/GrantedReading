@@ -1,6 +1,8 @@
 -r requirements.txt
 
 pytest==9.1.1
+pytest-playwright==0.7.1
+textstat==0.7.10
 
 # Build-time only, for scripts/build_frequency_table.py --source wordfreq.
 # Not imported at runtime.

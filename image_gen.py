@@ -6,6 +6,7 @@ Production image generation uses RunPod (FLUX.1-schnell via vLLM-Omni).
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import re
 
@@ -106,7 +107,21 @@ def image_data_url(image_base64: str, mime: str | None = None) -> str:
 def generate_image(image_prompt):
     """Call RunPod Flux and return a base64 image string (PNG)."""
     # Lazy import keeps this file free of circular imports with llm.py.
+    from ai_fixtures import (
+        FIXTURE_PNG_B64,
+        mock_ai_enabled,
+        post_fake_runpod_webhook,
+    )
     from llm import ensure_ai_configured, user_error_message
+
+    if mock_ai_enabled():
+        # Return a real PNG and also exercise the signed webhook handler.
+        job_id = "mock-" + hashlib.sha1((image_prompt or "img").encode()).hexdigest()[:16]
+        try:
+            post_fake_runpod_webhook(job_id=job_id, image_b64=FIXTURE_PNG_B64)
+        except Exception:
+            logger.exception("MOCK_AI Runpod webhook post failed; continuing with fixture image")
+        return FIXTURE_PNG_B64
 
     ensure_ai_configured()
 
